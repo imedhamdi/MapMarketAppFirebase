@@ -1,23 +1,30 @@
+// /storage.rules
 rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
     
-    // Les avatars ne peuvent être écrits que par l'utilisateur propriétaire
-    // La lecture est publique pour que les autres utilisateurs puissent voir les avatars
+    // Les avatars ne peuvent être écrits que par l'utilisateur propriétaire et ne doivent pas dépasser 1MB.
     match /avatars/{userId}/{fileName} {
       allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null && request.auth.uid == userId
+                   && request.resource.size < 1 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+    
+    // Les images d'annonces ne peuvent être écrites que par l'utilisateur propriétaire.
+    // La taille est limitée à 5MB par image.
+    match /ads/{userId}/{adId}/{fileName} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == userId
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
     }
 
-    // Les images d'annonces peuvent être écrites par tout utilisateur authentifié
-    // La taille est limitée à 5MB
-    // La lecture est publique
-    match /ads/{adId}/{fileName} {
-        allow read: if true;
-        allow write: if request.auth != null
-                    && request.resource.size < 5 * 1024 * 1024
-                    && request.resource.contentType.matches('image/.*');
+    // Les miniatures (générées par la fonction cloud) sont en lecture seule pour les clients.
+    match /ads/{userId}/{adId}/thumbs/{fileName} {
+      allow read: if true;
+      allow write: if false; // Seules les fonctions cloud peuvent écrire ici
     }
   }
 }

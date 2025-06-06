@@ -5,7 +5,7 @@
  * @file Ce fichier gère toutes les manipulations du DOM, l'ouverture et la fermeture
  * des modales, et les mises à jour visuelles en réponse aux actions de l'utilisateur
  * et aux changements d'état de l'application.
- * @version 2.0.0
+ * @version 2.1.0
  */
 
 import { getState, subscribe } from './state.js';
@@ -61,7 +61,6 @@ function setupModalTriggers() {
 }
 
 /**
- * **IMPLÉMENTATION COMPLÈTE**
  * Met en place toute la logique pour la modale d'authentification :
  * - Les clics sur les liens pour changer de vue (inscription, mdp oublié).
  * - La soumission des formulaires.
@@ -81,7 +80,7 @@ function setupAuthModal() {
     // Écouteurs pour la soumission des formulaires
     const loginForm = document.getElementById('login-form');
     const signupForm = document.getElementById('signup-form');
-    const resetForm = document.getElementById('reset-password-form');
+    const resetForm = document.getElementById('reset-password-form'); // Cible le formulaire de réinitialisation
     
     loginForm?.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -99,14 +98,19 @@ function setupAuthModal() {
         const password = signupForm.elements['signup-password'].value;
         const username = signupForm.elements['signup-name'].value;
         const result = await handleSignUp(email, password, username);
-        if (result.success) switchAuthView('validate-email');
+        if (result.success) switchAuthView('email-validation-view');
     });
 
+    // AJOUT : La logique manquante pour le formulaire de mot de passe oublié
     resetForm?.addEventListener('submit', async (e) => {
         e.preventDefault();
         if (!validateForm(resetForm).isValid) return;
         const email = resetForm.elements['reset-email'].value;
-        await handlePasswordReset(email);
+        const result = await handlePasswordReset(email);
+        // Optionnel : si l'envoi réussit, on peut rebasculer sur la vue de connexion
+        if (result.success) {
+            switchAuthView('login');
+        }
     });
 
     document.getElementById('resend-validation-email-btn')?.addEventListener('click', handleResendVerificationEmail);
@@ -114,7 +118,7 @@ function setupAuthModal() {
 
 /**
  * Bascule entre les différentes vues de la modale d'authentification.
- * @param {'login' | 'signup' | 'reset' | 'validate-email'} viewName Le nom de la vue à afficher.
+ * @param {'login' | 'signup' | 'reset' | 'email-validation-view'} viewName Le nom de la vue à afficher.
  */
 function switchAuthView(viewName) {
     if (!authModal) return;
@@ -124,8 +128,15 @@ function switchAuthView(viewName) {
     authModal.querySelectorAll('.modal-title').forEach(title => title.classList.add('hidden'));
     
     // Affiche la vue et le titre correspondants
-    const viewToShow = authModal.querySelector(`#${viewName}-form`) || authModal.querySelector(`#${viewName}-view`);
-    const titleToShow = authModal.querySelector(`#auth-modal-title-${viewName}`);
+    let viewToShow, titleToShow;
+
+    if (viewName === 'email-validation-view') {
+        viewToShow = authModal.querySelector('#email-validation-view');
+        titleToShow = authModal.querySelector(`#auth-modal-title-validate-email`);
+    } else {
+        viewToShow = authModal.querySelector(`#${viewName}-form`);
+        titleToShow = authModal.querySelector(`#auth-modal-title-${viewName}`);
+    }
     
     viewToShow?.classList.remove('hidden');
     titleToShow?.classList.remove('hidden');
@@ -145,7 +156,7 @@ function switchAuthView(viewName) {
         switchToLoginBtn?.classList.remove('hidden');
     }
 
-    if (viewName === 'validate-email') {
+    if (viewName === 'email-validation-view') {
         const emailAddressSpan = document.getElementById('validation-email-address');
         const signupEmailInput = document.getElementById('signup-email');
         if (emailAddressSpan && signupEmailInput) {
@@ -164,24 +175,27 @@ function updateUIOnStateChange({ isLoggedIn, userProfile }) {
 
     if (isLoggedIn && userProfile) {
         profileBtn.setAttribute('data-user-logged-in', 'true');
-        profileAvatar.src = userProfile.avatarUrl || `https://placehold.co/32x32/4f46e5/ffffff?text=${userProfile.username.charAt(0).toUpperCase()}`;
+        profileAvatar.src = userProfile.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(userProfile.username)}&background=4f46e5&color=fff`;
         profileAvatar.alt = `Profil de ${userProfile.username}`;
-        profileBtn.onclick = () => openModal('profile-modal');
+        // L'événement click pour ouvrir la modale de profil est géré par setupModalTriggers via aria-controls
     } else {
         profileBtn.setAttribute('data-user-logged-in', 'false');
-        profileAvatar.src = 'https://placehold.co/32x32/e0e0e0/757575?text=User';
+        profileAvatar.src = 'https://placehold.co/32x32/e0e0e0/757575?text=U';
         profileAvatar.alt = 'Se connecter';
-        profileBtn.onclick = () => openModal('auth-modal');
+        // L'événement click pour ouvrir la modale d'auth est géré par setupModalTriggers
     }
 }
 
-// --- Fonctions d'ouverture/fermeture exportées si besoin ---
 
 export function openModal(modalId) {
     const modal = document.getElementById(modalId);
     if (modal) {
         modal.setAttribute('aria-hidden', 'false');
         document.body.classList.add('modal-open');
+        // Si c'est la modale d'authentification, on s'assure qu'elle est sur la vue 'login' par défaut
+        if (modalId === 'auth-modal' && modal.dataset.currentView !== 'login') {
+            switchAuthView('login');
+        }
     }
 }
 
@@ -189,6 +203,7 @@ export function closeModal(modalId) {
     const modal = document.getElementById(modalId);
     if (modal) {
         modal.setAttribute('aria-hidden', 'true');
+        // Ne retire la classe que s'il n'y a plus aucune modale ouverte
         if (!document.querySelector('.modal-overlay[aria-hidden="false"]')) {
             document.body.classList.remove('modal-open');
         }
