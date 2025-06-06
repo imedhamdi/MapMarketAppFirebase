@@ -31,7 +31,12 @@ function main() {
 
         console.log("MapMarket initialisé avec succès.");
         showToast("Bienvenue sur MapMarket !", "info");
-    
+
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/service-worker.js')
+                .catch(err => console.error('SW registration failed', err));
+        }
+
     } catch (error) {
         console.error("Erreur critique lors de l'initialisation :", error);
         document.body.innerHTML = `<div style="text-align:center; padding: 2rem;"><h1>Erreur critique</h1><p>L'application n'a pas pu démarrer.</p></div>`;
