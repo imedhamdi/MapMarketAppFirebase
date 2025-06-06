@@ -113,3 +113,26 @@ function doesAdMatchAlert(ad: any, alert: any): boolean {
     
     return true;
 }
+
+/**
+ * Notifie le vendeur lorsqu'une annonce est ajoutée aux favoris.
+ */
+export async function sendAdFavoritedNotification(sellerId: string, adTitle: string, adId: string) {
+    const sellerDoc = await db.collection('users').doc(sellerId).get();
+    const sellerData = sellerDoc.data();
+    if (!sellerData?.fcmTokens || !sellerData.settings?.notifications?.pushEnabled) return;
+
+    const payload: admin.messaging.MessagingPayload = {
+        notification: {
+            title: 'Nouveau favori',
+            body: `${adTitle} a été ajouté à un favori`,
+            icon: sellerData.avatarUrl || '/assets/icons/icon-192x192.png',
+            click_action: `/ad/${adId}`
+        },
+        data: { type: 'FAVORITED', adId }
+    };
+
+    await messaging.sendToDevice(sellerData.fcmTokens, payload).catch(err => {
+        functions.logger.error('Erreur envoi notif favori', err);
+    });
+}
