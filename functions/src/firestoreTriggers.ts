@@ -1,7 +1,7 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { indexAd, updateAd, deleteAd } from "./algolia";
-import { sendAlertsForNewAd, sendNewMessageNotification } from "./notifications";
+import { sendAlertsForNewAd, sendNewMessageNotification, sendAdFavoritedNotification } from "./notifications";
 
 const db = admin.firestore();
 const storage = admin.storage();
@@ -102,4 +102,30 @@ export const onReviewCreate = functions
                 'stats.reviews': { count: newCount, sum: newSum },
             });
         });
+    });
+
+export const onFavoriteWrite = functions
+    .region('europe-west1')
+    .firestore.document('users/{userId}/favorites/{adId}')
+    .onWrite(async (change, context) => {
+        const { userId, adId } = context.params;
+        const adRef = db.collection('ads').doc(adId);
+        const userRef = db.collection('users').doc(userId);
+
+        if (!change.before.exists && change.after.exists) {
+            await db.runTransaction(async tx => {
+                tx.update(adRef, { 'stats.favorites': admin.firestore.FieldValue.increment(1) });
+                tx.update(userRef, { 'stats.favoritesCount': admin.firestore.FieldValue.increment(1) });
+            });
+            const adSnap = await adRef.get();
+            const adData = adSnap.data();
+            if (adData && adData.sellerId && adData.sellerId !== userId) {
+                await sendAdFavoritedNotification(adData.sellerId, adData.title, adId);
+            }
+        } else if (change.before.exists && !change.after.exists) {
+            await db.runTransaction(async tx => {
+                tx.update(adRef, { 'stats.favorites': admin.firestore.FieldValue.increment(-1) });
+                tx.update(userRef, { 'stats.favoritesCount': admin.firestore.FieldValue.increment(-1) });
+            });
+        }
     });

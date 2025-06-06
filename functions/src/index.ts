@@ -15,8 +15,8 @@ import { onUserCreate } from "./auth";
 export { onUserCreate };
 
 // Fonctions déclenchées par Firestore (annonces, messages, avis)
-import { onAdWrite, onMessageCreate, onReviewCreate } from "./firestoreTriggers";
-export { onAdWrite, onMessageCreate, onReviewCreate };
+import { onAdWrite, onMessageCreate, onReviewCreate, onFavoriteWrite } from "./firestoreTriggers";
+export { onAdWrite, onMessageCreate, onReviewCreate, onFavoriteWrite };
 
 // Fonctions planifiées (cron jobs)
 import { cleanupInactiveUsers } from "./scheduled";
