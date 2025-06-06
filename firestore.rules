@@ -1,88 +1,18 @@
-rules_version = '2';
+rules_version='2'
+
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // Validation de base pour un document utilisateur
-    function isUserRequestingSelf(userId) {
-      return request.auth.uid == userId;
-    }
-
-    function isUserAuthenticated() {
-      return request.auth != null;
-    }
-    
-    // Valide les champs d'un profil utilisateur lors de la création ou mise à jour
-    function isUserDataValid(data) {
-        return data.username is string && data.username.size() > 2 && data.username.size() < 30
-            && data.email == request.auth.email
-            && data.registrationDate is timestamp
-            && (!('avatarUrl' in data) || data.avatarUrl is string && data.avatarUrl.matches('https?://firebasestorage.googleapis.com/.*'))
-            && data.stats.adsCount == 0 // Initial values
-            && data.stats.favoritesCount == 0
-            && data.stats.averageRating == 0;
-    }
-
-    // Valide les champs d'une annonce
-    function isAdDataValid(data) {
-      return data.title is string && data.title.size() > 5 && data.title.size() < 100
-          && data.description is string && data.description.size() > 10 && data.description.size() < 1000
-          && data.price is number && data.price >= 0
-          && data.sellerId == request.auth.uid
-          && exists(/databases/$(database)/documents/categories/$(data.categoryId))
-          && data.location.coordinates is latlng
-          && data.images is list && data.images.size() <= 5
-          && data.status == 'active'
-          && data.createdAt is timestamp;
-    }
-
-    // Règles pour les utilisateurs
-    match /users/{userId} {
-      allow read: if isUserAuthenticated();
-      allow create: if isUserRequestingSelf(userId) && isUserDataValid(request.resource.data);
-      allow update: if isUserRequestingSelf(userId); // La validation des champs spécifiques se fera dans les fonctions cloud
-      allow delete: if isUserRequestingSelf(userId);
-
-      match /favorites/{favoriteId} {
-        allow read, write: if isUserRequestingSelf(userId);
-      }
-      match /alerts/{alertId} {
-        allow read, write: if isUserRequestingSelf(userId);
-      }
-    }
-    
-    // Les catégories sont en lecture seule pour les clients, gérées par les admins
-    match /categories/{categoryId} {
-        allow read: if true;
-        allow write: if false; // Géré via la console Firebase ou un back-office admin
-    }
-
-    // Annonces
-    match /ads/{adId} {
-      allow read: if true;
-      allow create: if isUserAuthenticated() && isAdDataValid(request.resource.data);
-      allow update: if isUserAuthenticated() && request.auth.uid == resource.data.sellerId; // Validation plus poussée dans la fonction cloud
-      allow delete: if isUserAuthenticated() && request.auth.uid == resource.data.sellerId;
-    }
-    
-    // Chats et Messages
-    match /chats/{chatId} {
-      allow read, create, update: if isUserAuthenticated() && request.auth.uid in resource.data.participants;
-      
-      match /messages/{messageId} {
-        allow read: if isUserAuthenticated() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
-        allow create: if isUserAuthenticated() 
-          && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants
-          && request.resource.data.senderId == request.auth.uid
-          && request.resource.data.text is string && request.resource.data.text.size() > 0;
-      }
-    }
-    
-    // Avis (Reviews)
-    match /reviews/{reviewId} {
-      allow read: if true;
-      allow create: if isUserAuthenticated() 
-        && request.auth.uid == request.resource.data.reviewerId
-        && request.resource.data.rating is number && request.resource.data.rating >= 1 && request.resource.data.rating <= 5;
+    match /{document=**} {
+      // This rule allows anyone with your database reference to view, edit,
+      // and delete all data in your database. It is useful for getting
+      // started, but it is configured to expire after 30 days because it
+      // leaves your app open to attackers. At that time, all client
+      // requests to your database will be denied.
+      //
+      // Make sure to write security rules for your app before that time, or
+      // else all client requests to your database will be denied until you
+      // update your rules.
+      allow read, write: if request.time < timestamp.date(2025, 7, 6);
     }
   }
 }

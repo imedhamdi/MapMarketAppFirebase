@@ -1,15 +1,5 @@
-/**
- * =================================================================
- * MAPMARKET - GESTIONNAIRE D'AUTHENTIFICATION (auth.js)
- * =================================================================
- * @file Ce module est le cœur de la gestion des utilisateurs. Il gère l'état
- * de la session, l'inscription, la connexion, la déconnexion, la vérification
- * par e-mail et la réinitialisation du mot de passe. Il communique avec
- * le module `state.js` pour mettre à jour l'état global de l'application.
- * @version 2.1.0 (Correction de l'export manquant)
- */
+// public/js/auth.js
 
-// CORRECTION : Ajout des imports nécessaires pour la mise à jour du mot de passe
 import {
     onAuthStateChanged,
     createUserWithEmailAndPassword,
@@ -26,15 +16,24 @@ import { fetchUserProfile } from "./services.js";
 import { showToast, showGlobalLoader, hideGlobalLoader } from './utils.js';
 
 /**
- * Initialise l'écouteur principal qui réagit aux changements d'état de connexion de l'utilisateur.
- * C'est la fonction centrale qui pilote l'état d'authentification de l'application.
+ * L'écouteur principal. Il reste crucial pour maintenir la session
+ * lors du rechargement de la page.
  */
 export function setupAuthListeners() {
     onAuthStateChanged(auth, async (user) => {
+        // Si l'état est déjà "loggé", c'est que handleLogin/handleSignUp vient de le faire.
+        // On évite un re-rendu inutile pour rendre l'UI plus fluide.
+        // Cette vérification est une micro-optimisation. Le code original fonctionne aussi.
+        if (user && getState().isLoggedIn) {
+             hideGlobalLoader();
+             return;
+        }
+
         showGlobalLoader("Vérification de la session...");
         try {
             if (user) {
                 const userProfile = await fetchUserProfile(user.uid);
+                // La logique de fallback est une bonne pratique, on la garde.
                 if (!userProfile) {
                     console.warn(`Profil pour ${user.uid} non trouvé, nouvel essai dans 2s.`);
                     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -62,14 +61,26 @@ export function setupAuthListeners() {
 
 /**
  * Gère l'inscription d'un nouvel utilisateur.
+ * CORRIGÉ : Met à jour l'état immédiatement après la création.
  */
 export async function handleSignUp(email, password, username) {
     showGlobalLoader("Création du compte...");
     try {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        await updateProfile(userCredential.user, { displayName: username });
-        await sendEmailVerification(userCredential.user);
+        const user = userCredential.user;
+        await updateProfile(user, { displayName: username });
+
+        // On attend que la Cloud Function onUserCreate ait eu le temps de créer le profil
+        // dans Firestore. 2.5 secondes est une attente pragmatique pour ce projet.
+        await new Promise(resolve => setTimeout(resolve, 2500));
+        const userProfile = await fetchUserProfile(user.uid);
+
+        // Mise à jour de l'état IMMÉDIATE, avant de fermer la modale
+        setState({ currentUser: user, userProfile: userProfile, isLoggedIn: true });
+
+        await sendEmailVerification(user);
         showToast("Inscription réussie ! Un email de vérification vous a été envoyé.", "success");
+
         return { success: true };
     } catch (error) {
         console.error("Erreur d'inscription:", error.code, error.message);
@@ -82,13 +93,20 @@ export async function handleSignUp(email, password, username) {
 
 /**
  * Gère la connexion d'un utilisateur.
+ * CORRIGÉ : Met à jour l'état immédiatement après la connexion.
  */
 export async function handleLogin(email, password) {
     showGlobalLoader("Connexion en cours...");
     try {
-        await signInWithEmailAndPassword(auth, email, password);
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        const user = userCredential.user;
+
+        // Récupération du profil et mise à jour de l'état IMMÉDIATE.
+        const userProfile = await fetchUserProfile(user.uid);
+        setState({ currentUser: user, userProfile: userProfile, isLoggedIn: true });
+
         showToast("Connexion réussie !", "success");
-        return { success: true };
+        return { success: true }; // L'état est maintenant à jour.
     } catch (error) {
         console.error("Erreur de connexion:", error.code, error.message);
         showToast(getAuthErrorMessage(error.code), "error");
@@ -97,6 +115,10 @@ export async function handleLogin(email, password) {
         hideGlobalLoader();
     }
 }
+
+
+// ... Le reste du fichier (handleLogout, handlePasswordReset, etc.) peut rester inchangé.
+// J'inclus la fin du fichier pour être complet.
 
 /**
  * Gère la déconnexion de l'utilisateur actuel.
@@ -154,10 +176,7 @@ export async function handleResendVerificationEmail() {
 }
 
 /**
- * CORRECTION : Ajout du mot-clé `export` pour rendre la fonction importable.
  * Gère la mise à jour du mot de passe de l'utilisateur connecté.
- * @param {string} newPassword Le nouveau mot de passe.
- * @returns {Promise<{success: boolean, error?: string}>}
  */
 export async function handleUpdatePassword(newPassword) {
     const user = auth.currentUser;
@@ -173,7 +192,6 @@ export async function handleUpdatePassword(newPassword) {
         return { success: true };
     } catch (error) {
         console.error("Erreur de mise à jour du mot de passe:", error);
-        // Ajout d'une traduction pour l'erreur de ré-authentification
         showToast(`Erreur : ${getAuthErrorMessage(error.code)}`, "error");
         return { success: false, error: error.code };
     } finally {
