@@ -12,7 +12,7 @@ const state = {
     userProfile: null,      // Le profil utilisateur depuis Firestore
     isLoggedIn: false,      // Un booléen simple pour des vérifications rapides
     currentAds: [],         // Le tableau des annonces actuellement affichées sur la carte
-    allCategories: [],      // La liste des catégories, chargée une fois au démarrage
+    allCategories: [],      // CORRECTION : La liste des catégories, chargée une fois au démarrage
     listeners: [],          // Un tableau pour les écouteurs de changement d'état
 };
 

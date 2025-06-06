@@ -5,47 +5,30 @@
  * @file Ce fichier est la seule porte d'entrée vers la base de données et le stockage.
  * Il abstrait toute la logique de communication avec Firebase pour que le reste de
  * l'application n'ait qu'à appeler des fonctions claires et explicites.
- * @version 2.0.0
+ * @version 2.1.0
  */
 
 import { db, storage, auth } from './firebase.js';
 import {
     doc, getDoc, setDoc, addDoc, collection, getDocs, onSnapshot,
-    serverTimestamp, query, where, orderBy, writeBatch, deleteDoc,
+    serverTimestamp, query, where, orderBy, deleteDoc,
     updateDoc, increment, runTransaction
 } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore.js";
-import { ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-storage.js";
+import { ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-storage.js";
 
 // --- Services Utilisateur ---
 
 /**
  * Récupère le profil d'un utilisateur depuis Firestore.
  * @param {string} userId - L'ID de l'utilisateur.
- * @returns {Promise<object|null>} Le profil de l'utilisateur ou null.
+ * @returns {Promise<object|null>} Le profil de l'utilisateur (avec son ID) ou null.
  */
 export const fetchUserProfile = async (userId) => {
     if (!userId) return null;
     const docRef = doc(db, "users", userId);
     const docSnap = await getDoc(docRef);
-    return docSnap.exists() ? docSnap.data() : null;
-};
-
-/**
- * Crée le document profil pour un nouvel utilisateur.
- * Appelée côté client pour la réactivité, mais la Cloud Function onUserCreate est la source de vérité.
- * @param {string} userId - L'ID de l'utilisateur (depuis Firebase Auth).
- * @param {string} email - L'email de l'utilisateur.
- * @param {string} username - Le nom d'utilisateur.
- */
-export const createUserProfile = (userId, email, username) => {
-    const userDocRef = doc(db, "users", userId);
-    return setDoc(userDocRef, {
-        uid: userId, username, email, avatarUrl: "",
-        registrationDate: serverTimestamp(),
-        stats: { adsCount: 0, favoritesCount: 0, averageRating: 0, reviewCount: 0 },
-        settings: { darkMode: false, language: 'fr', notifications: { pushEnabled: true, emailEnabled: true }},
-        lastSeen: serverTimestamp(),
-    });
+    // CORRECTION : Inclure l'ID du document dans l'objet retourné.
+    return docSnap.exists() ? { id: docSnap.id, ...docSnap.data() } : null;
 };
 
 /**
@@ -62,14 +45,21 @@ export const updateUserProfile = (userId, data) => {
 // --- Services d'Annonces ---
 
 export const fetchCategories = async () => {
-    const q = query(collection(db, "categories"), orderBy("name_fr"));
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    try {
+        const q = query(collection(db, "categories"), orderBy("name_fr"));
+        const querySnapshot = await getDocs(q);
+        return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (error) {
+        console.error("Erreur lors de la récupération des catégories :", error);
+        return []; // Retourne un tableau vide en cas d'erreur pour éviter de planter l'app.
+    }
 };
 
 export const fetchAds = async (filters = {}) => {
     let q = query(collection(db, "ads"), where("status", "==", "active"));
-    if (filters.category) q = query(q, where("categoryId", "==", filters.category));
+    if (filters.category) {
+        q = query(q, where("categoryId", "==", filters.category));
+    }
     const sortBy = filters.sortBy || "createdAt_desc";
     const [sortField, sortDirection] = sortBy.split('_');
     q = query(q, orderBy(sortField, sortDirection));
@@ -78,12 +68,28 @@ export const fetchAds = async (filters = {}) => {
     return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 };
 
-export const fetchAdById = async (adId) => {
+/**
+ * AJOUT : Récupère les annonces postées par un utilisateur spécifique.
+ * @param {string} userId - L'ID de l'utilisateur.
+ * @returns {Promise<Array>} Une liste des annonces de l'utilisateur.
+ */
+export const fetchUserAds = async (userId) => {
+    if (!userId) return [];
+    const q = query(collection(db, "ads"), where("sellerId", "==", userId), orderBy("createdAt", "desc"));
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+};
+
+/**
+ * CORRECTION : Ajout d'un paramètre pour contrôler l'incrémentation des vues.
+ */
+export const fetchAdById = async (adId, incrementView = true) => {
     if (!adId) return null;
     const docRef = doc(db, "ads", adId);
-    // L'incrémentation des vues est mieux gérée côté serveur pour éviter les abus,
-    // mais pour une V1, on peut le faire ici de manière optimiste.
-    await updateDoc(docRef, { "stats.views": increment(1) });
+    if (incrementView) {
+        // Géré côté client pour la simplicité, mais pourrait être une fonction cloud.
+        await updateDoc(docRef, { "stats.views": increment(1) }).catch(e => console.warn("Impossible d'incrémenter la vue", e));
+    }
     const docSnap = await getDoc(docRef);
     return docSnap.exists() ? { id: docSnap.id, ...docSnap.data() } : null;
 };
@@ -103,7 +109,7 @@ export const updateAd = (adId, adData) => {
 };
 
 export const deleteAd = (adId) => {
-    // La Cloud Function onAdWrite s'occupera de supprimer les images et de décrémenter les compteurs.
+    // La Cloud Function onAdWrite s'occupera de nettoyer les images et les compteurs.
     return deleteDoc(doc(db, "ads", adId));
 };
 
@@ -116,8 +122,11 @@ export const uploadAdImage = (file, userId) => {
     return uploadBytes(storageRef, file).then(snapshot => getDownloadURL(snapshot.ref));
 };
 
+/**
+ * CORRECTION : Utilise un nom de fichier fixe pour écraser l'ancien avatar.
+ */
 export const uploadAvatar = (file, userId) => {
-    const filePath = `avatars/${userId}/${file.name}`;
+    const filePath = `avatars/${userId}/avatar`;
     const storageRef = ref(storage, filePath);
     return uploadBytes(storageRef, file).then(snapshot => getDownloadURL(snapshot.ref));
 };
@@ -169,9 +178,6 @@ export const listenToFavorites = (userId, callback) => {
     return onSnapshot(favsColRef, (snapshot) => callback(snapshot.docs.map(doc => doc.id)));
 };
 
-/**
- * Ajoute ou retire une annonce des favoris de manière atomique en utilisant une transaction.
- */
 export const toggleFavorite = (userId, adId, isCurrentlyFavorite) => {
     const favRef = doc(db, `users/${userId}/favorites`, adId);
     const adRef = doc(db, "ads", adId);
@@ -195,6 +201,7 @@ export const toggleFavorite = (userId, adId, isCurrentlyFavorite) => {
     });
 };
 
+
 // --- Services d'Alertes ---
 
 export const fetchAlerts = async (userId) => {
@@ -215,6 +222,7 @@ export const createOrUpdateAlert = (userId, alertData, alertId) => {
 export const deleteAlert = (userId, alertId) => {
     return deleteDoc(doc(db, `users/${userId}/alerts`, alertId));
 };
+
 
 // --- Services d'Avis (Reviews) ---
 

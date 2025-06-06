@@ -13,13 +13,14 @@ import { getStorage, connectStorageEmulator } from "https://www.gstatic.com/fire
 import { getFunctions, connectFunctionsEmulator } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-functions.js";
 import { getMessaging } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-messaging.js";
 
+// CORRECTION : Utilisation de la configuration exacte de votre projet Firebase.
 const firebaseConfig = {
     apiKey: "AIzaSyAekia-9yVdrDCHSm5mhp3P8XJjg6UbQqg",
     authDomain: "mapmarket-72654.firebaseapp.com",
     projectId: "mapmarket-72654",
     storageBucket: "mapmarket-72654.appspot.com",
     messagingSenderId: "162014945728",
-    appId: "1:162014945728:web:0f6a95782782c5d3d4b6c3"
+    appId: "1:162014945728:web:0f6a95782782c5d3d4b6c3" // Gardé depuis votre fichier original
 };
 
 const app = initializeApp(firebaseConfig);
@@ -29,9 +30,7 @@ const storage = getStorage(app);
 const functions = getFunctions(app, 'europe-west1');
 const messaging = getMessaging(app);
 
-// --- C'EST CE BLOC QUI EST IMPORTANT ---
-// Il vérifie si l'adresse est 'localhost' ou '127.0.0.1' et redirige
-// toutes les communications vers les émulateurs locaux.
+// Ce bloc est correct et permet de se connecter aux émulateurs locaux.
 if (["localhost", "127.0.0.1"].includes(window.location.hostname)) {
     console.warn(
         "MODE LOCAL DÉTECTÉ : Connexion aux Émulateurs Firebase. " +

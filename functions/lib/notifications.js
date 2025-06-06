@@ -23,7 +23,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendAlertsForNewAd = exports.sendNewMessageNotification = void 0;
+exports.sendAdFavoritedNotification = exports.sendAlertsForNewAd = exports.sendNewMessageNotification = void 0;
 const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
 const geo_1 = require("./utils/geo");
@@ -126,4 +126,27 @@ function doesAdMatchAlert(ad, alert) {
     }
     return true;
 }
+/**
+ * Notifie le vendeur lorsqu'une annonce est ajoutée aux favoris.
+ */
+async function sendAdFavoritedNotification(sellerId, adTitle, adId) {
+    var _a, _b;
+    const sellerDoc = await db.collection('users').doc(sellerId).get();
+    const sellerData = sellerDoc.data();
+    if (!(sellerData === null || sellerData === void 0 ? void 0 : sellerData.fcmTokens) || !((_b = (_a = sellerData.settings) === null || _a === void 0 ? void 0 : _a.notifications) === null || _b === void 0 ? void 0 : _b.pushEnabled))
+        return;
+    const payload = {
+        notification: {
+            title: 'Nouveau favori',
+            body: `${adTitle} a été ajouté à un favori`,
+            icon: sellerData.avatarUrl || '/assets/icons/icon-192x192.png',
+            click_action: `/ad/${adId}`
+        },
+        data: { type: 'FAVORITED', adId }
+    };
+    await messaging.sendToDevice(sellerData.fcmTokens, payload).catch(err => {
+        functions.logger.error('Erreur envoi notif favori', err);
+    });
+}
+exports.sendAdFavoritedNotification = sendAdFavoritedNotification;
 //# sourceMappingURL=notifications.js.map

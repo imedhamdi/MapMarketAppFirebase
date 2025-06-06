@@ -6,11 +6,10 @@
  * de la session, l'inscription, la connexion, la déconnexion, la vérification
  * par e-mail et la réinitialisation du mot de passe. Il communique avec
  * le module `state.js` pour mettre à jour l'état global de l'application.
- * @version 2.0.0
- * @exports setupAuthListeners - Fonction principale à appeler dans main.js.
- * @exports handleSignUp, handleLogin, handleLogout, handlePasswordReset, handleResendVerificationEmail
+ * @version 2.1.0 (Correction de l'export manquant)
  */
 
+// CORRECTION : Ajout des imports nécessaires pour la mise à jour du mot de passe
 import {
     onAuthStateChanged,
     createUserWithEmailAndPassword,
@@ -18,7 +17,8 @@ import {
     signOut,
     sendEmailVerification,
     sendPasswordResetEmail,
-    updateProfile
+    updateProfile,
+    updatePassword
 } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js";
 import { auth } from './firebase.js';
 import { setState } from './state.js';
@@ -34,16 +34,12 @@ export function setupAuthListeners() {
         showGlobalLoader("Vérification de la session...");
         try {
             if (user) {
-                // Un utilisateur est connecté.
                 const userProfile = await fetchUserProfile(user.uid);
-
-                // Si le profil n'existe pas encore dans Firestore (latence de la Cloud Function),
-                // on attend un court instant et on réessaie.
                 if (!userProfile) {
                     console.warn(`Profil pour ${user.uid} non trouvé, nouvel essai dans 2s.`);
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     const fallbackProfile = await fetchUserProfile(user.uid);
-                    setState({ currentUser: user, userProfile: fallbackProfile, isLoggedIn: true });
+                    setState({ currentUser: user, userProfile: fallbackProfile, isLoggedIn: !!fallbackProfile });
                 } else {
                     setState({ currentUser: user, userProfile: userProfile, isLoggedIn: true });
                 }
@@ -52,7 +48,6 @@ export function setupAuthListeners() {
                     showToast("Veuillez vérifier votre e-mail pour accéder à toutes les fonctionnalités.", "warning", 8000);
                 }
             } else {
-                // Aucun utilisateur n'est connecté.
                 setState({ currentUser: null, userProfile: null, isLoggedIn: false });
             }
         } catch (error) {
@@ -67,24 +62,13 @@ export function setupAuthListeners() {
 
 /**
  * Gère l'inscription d'un nouvel utilisateur.
- * @param {string} email - L'e-mail de l'utilisateur.
- * @param {string} password - Le mot de passe (6 caractères minimum).
- * @param {string} username - Le nom d'utilisateur choisi.
- * @returns {Promise<{success: boolean, error?: string}>} Un objet indiquant le succès ou l'échec.
  */
 export async function handleSignUp(email, password, username) {
     showGlobalLoader("Création du compte...");
     try {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        const user = userCredential.user;
-
-        // Met à jour le profil Firebase Auth avec le nom d'utilisateur.
-        // La Cloud Function onUserCreate utilisera cette information.
-        await updateProfile(user, { displayName: username });
-
-        // Envoie l'e-mail de vérification.
-        await sendEmailVerification(user);
-        
+        await updateProfile(userCredential.user, { displayName: username });
+        await sendEmailVerification(userCredential.user);
         showToast("Inscription réussie ! Un email de vérification vous a été envoyé.", "success");
         return { success: true };
     } catch (error) {
@@ -98,9 +82,6 @@ export async function handleSignUp(email, password, username) {
 
 /**
  * Gère la connexion d'un utilisateur.
- * @param {string} email - L'e-mail de l'utilisateur.
- * @param {string} password - Le mot de passe.
- * @returns {Promise<{success: boolean, error?: string}>}
  */
 export async function handleLogin(email, password) {
     showGlobalLoader("Connexion en cours...");
@@ -132,8 +113,6 @@ export async function handleLogout() {
 
 /**
  * Envoie un e-mail de réinitialisation de mot de passe.
- * @param {string} email - L'adresse e-mail de destination.
- * @returns {Promise<{success: boolean, error?: string}>}
  */
 export async function handlePasswordReset(email) {
     showGlobalLoader("Envoi du lien...");
@@ -152,7 +131,6 @@ export async function handlePasswordReset(email) {
 
 /**
  * Renvoie l'e-mail de vérification à l'utilisateur actuellement connecté.
- * @returns {Promise<{success: boolean}>}
  */
 export async function handleResendVerificationEmail() {
     const user = auth.currentUser;
@@ -176,9 +154,35 @@ export async function handleResendVerificationEmail() {
 }
 
 /**
+ * CORRECTION : Ajout du mot-clé `export` pour rendre la fonction importable.
+ * Gère la mise à jour du mot de passe de l'utilisateur connecté.
+ * @param {string} newPassword Le nouveau mot de passe.
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+export async function handleUpdatePassword(newPassword) {
+    const user = auth.currentUser;
+    if (!user) {
+        showToast("Utilisateur non connecté.", "error");
+        return { success: false };
+    }
+    
+    showGlobalLoader("Mise à jour du mot de passe...");
+    try {
+        await updatePassword(user, newPassword);
+        showToast("Mot de passe mis à jour avec succès.", "success");
+        return { success: true };
+    } catch (error) {
+        console.error("Erreur de mise à jour du mot de passe:", error);
+        // Ajout d'une traduction pour l'erreur de ré-authentification
+        showToast(`Erreur : ${getAuthErrorMessage(error.code)}`, "error");
+        return { success: false, error: error.code };
+    } finally {
+        hideGlobalLoader();
+    }
+}
+
+/**
  * Traduit les codes d'erreur de Firebase Auth en messages clairs pour l'utilisateur.
- * @param {string} errorCode - Le code d'erreur fourni par Firebase.
- * @returns {string} Un message d'erreur en français.
  */
 function getAuthErrorMessage(errorCode) {
     const messages = {
@@ -189,7 +193,8 @@ function getAuthErrorMessage(errorCode) {
         'auth/email-already-in-use': "Cette adresse e-mail est déjà utilisée.",
         'auth/weak-password': "Le mot de passe doit contenir au moins 6 caractères.",
         'auth/operation-not-allowed': "Ce mode de connexion n'est pas activé.",
-        'auth/too-many-requests': "L'accès à ce compte a été temporairement bloqué suite à de trop nombreuses tentatives. Réessayez plus tard."
+        'auth/too-many-requests': "L'accès à ce compte a été temporairement bloqué. Réessayez plus tard.",
+        'auth/requires-recent-login': "Opération sensible. Veuillez vous déconnecter et vous reconnecter avant de réessayer.",
     };
     return messages[errorCode] || "Une erreur inattendue est survenue. Veuillez réessayer.";
 }
