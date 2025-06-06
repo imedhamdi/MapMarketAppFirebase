@@ -9,6 +9,7 @@ const ASSETS = [
   '/js/firebase.js',
   '/js/auth.js',
   '/js/ad-manager.js',
+  '/js/ad-detail.js',
   '/js/chat.js',
   '/js/map.js',
   '/js/services.js',

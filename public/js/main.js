@@ -8,6 +8,7 @@ import { setupAuthListeners } from './auth.js';
 import { initUIManager } from './ui.js';
 import { initializeMap } from './map.js';
 import { initAdManager } from './ad-manager.js';
+import { initAdDetail } from './ad-detail.js';
 import { initChat } from './chat.js';
 import { showToast, showGlobalLoader, hideGlobalLoader } from './utils.js';
 import { fetchCategories } from './services.js';
@@ -50,6 +51,7 @@ async function main() {
         
         // 5. Initialise les modules de fonctionnalités.
         initAdManager();
+        initAdDetail();
         initChat();
 
         console.log("MapMarket initialisé avec succès.");
