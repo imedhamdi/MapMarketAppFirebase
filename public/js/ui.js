@@ -2,15 +2,21 @@
  * =================================================================
  * MAPMARKET - GESTIONNAIRE D'INTERFACE (ui.js)
  * =================================================================
+ * @file Gère l'initialisation de l'UI, les modales, les formulaires
+ * et les mises à jour visuelles basées sur l'état de l'application.
  */
 
-import { getState, subscribe } from './state.js';
+import { getState, subscribe, setState } from './state.js';
 import { handleLogout, handleLogin, handleSignUp, handlePasswordReset, handleUpdatePassword } from './auth.js';
 import { validateForm, showToast, showGlobalLoader, hideGlobalLoader } from './utils.js';
-import { openAdForm } from './ad-manager.js';
-import { updateUserProfile, uploadAvatar, fetchUserAds, deleteAd } from './services.js';
+import { openAdForm, invalidateAdFormMapSize } from './ad-manager.js';
+import { updateUserProfile, uploadAvatar, fetchUserAds, deleteAd, createOrUpdateAlert, fetchAlerts, deleteAlert as deleteAlertService } from './services.js';
 import { updateProfile as updateAuthProfile } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js";
 import { auth } from './firebase.js';
+import { fetchUserProfile } from './services.js';
+import { loadAndDisplayAds } from './map.js';
+
+let deferredInstallPrompt = null;
 
 /**
  * Initialise tous les gestionnaires d'événements de l'UI.
@@ -22,6 +28,192 @@ export function initUIManager() {
     initProfileModal();
     initMoreOptionsMenu();
     initMyAdsModal();
+    initPwaInstall();
+    initFiltersModal();
+    initAlertsModal();
+    initSearchBar();
+}
+
+/**
+ * Gère l'invite d'installation de la PWA.
+ */
+function initPwaInstall() {
+    const installContainer = document.getElementById('pwa-install-prompt-container');
+    const installBtn = document.getElementById('pwa-install-accept-btn');
+    const dismissBtn = document.getElementById('pwa-install-dismiss-btn');
+    const moreInstallBtn = document.getElementById('more-pwa-install-btn');
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredInstallPrompt = e;
+        installContainer.classList.remove('hidden');
+        moreInstallBtn.classList.remove('hidden');
+    });
+
+    const handleInstall = async () => {
+        if (deferredInstallPrompt) {
+            deferredInstallPrompt.prompt();
+            const { outcome } = await deferredInstallPrompt.userChoice;
+            if (outcome === 'accepted') {
+                showToast('Application installée avec succès !', 'success');
+            }
+            deferredInstallPrompt = null;
+            installContainer.classList.add('hidden');
+            moreInstallBtn.classList.add('hidden');
+        }
+    };
+
+    installBtn.addEventListener('click', handleInstall);
+    moreInstallBtn.addEventListener('click', handleInstall);
+
+    dismissBtn.addEventListener('click', () => {
+        installContainer.classList.add('hidden');
+    });
+
+    window.addEventListener('appinstalled', () => {
+        installContainer.classList.add('hidden');
+        moreInstallBtn.classList.add('hidden');
+    });
+}
+
+
+/**
+ * Gère l'affichage/masquage de la barre de recherche.
+ */
+function initSearchBar() {
+    const showBtn = document.getElementById('header-show-search-btn');
+    const closeBtn = document.getElementById('close-search-bar-btn');
+    const searchWrapper = document.getElementById('header-search-bar-wrapper');
+
+    showBtn.addEventListener('click', () => searchWrapper.classList.toggle('hidden'));
+    closeBtn.addEventListener('click', () => searchWrapper.classList.add('hidden'));
+}
+
+/**
+ * Initialise la modale des filtres.
+ */
+function initFiltersModal() {
+    const filtersForm = document.getElementById('filters-form');
+    filtersForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const formData = new FormData(filtersForm);
+        const filters = {};
+        // Ne conserve que les filtres qui ont une valeur
+        for (const [key, value] of formData.entries()) {
+            if (value) {
+                filters[key] = value;
+            }
+        }
+        
+        showGlobalLoader('Application des filtres...');
+        loadAndDisplayAds(filters).finally(() => {
+            hideGlobalLoader();
+            closeModal('filters-modal');
+            showToast('Filtres appliqués', 'success');
+        });
+    });
+
+    filtersForm.addEventListener('reset', () => {
+        showGlobalLoader('Réinitialisation...');
+        loadAndDisplayAds({}).finally(() => {
+            hideGlobalLoader();
+            closeModal('filters-modal');
+            showToast('Filtres réinitialisés', 'info');
+        });
+    });
+    
+    const distanceSlider = document.getElementById('filter-distance');
+    const distanceDisplay = document.getElementById('filter-distance-value-display');
+    distanceSlider.addEventListener('input', () => {
+        distanceDisplay.textContent = `${distanceSlider.value} km`;
+    });
+}
+
+/**
+ * Initialise la modale des alertes.
+ */
+function initAlertsModal() {
+    const alertsModal = document.getElementById('alerts-modal');
+    const createFormSection = document.getElementById('create-alert-form-section');
+    const showFormBtn = document.getElementById('show-create-alert-form-btn');
+    const cancelFormBtn = document.getElementById('cancel-create-alert-btn');
+    const alertForm = document.getElementById('create-alert-form');
+
+    alertsModal.addEventListener('modal:open', loadUserAlerts);
+
+    showFormBtn.addEventListener('click', () => {
+        alertForm.reset();
+        document.getElementById('alert-id').value = '';
+        createFormSection.classList.remove('hidden');
+        showFormBtn.classList.add('hidden');
+    });
+
+    cancelFormBtn.addEventListener('click', () => {
+        createFormSection.classList.add('hidden');
+        showFormBtn.classList.remove('hidden');
+    });
+
+    alertForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if(!validateForm(alertForm).isValid) return;
+
+        const { currentUser } = getState();
+        const formData = new FormData(alertForm);
+        const alertId = formData.get('alertId') || null;
+        const alertData = {
+            keywords: formData.get('keywords').split(',').map(kw => kw.trim()).filter(Boolean),
+            categoryId: formData.get('category') || null,
+            radius: parseInt(formData.get('radius'), 10),
+        };
+
+        showGlobalLoader('Sauvegarde de l\'alerte...');
+        try {
+            await createOrUpdateAlert(currentUser.uid, alertData, alertId);
+            showToast(alertId ? 'Alerte modifiée !' : 'Alerte créée !', 'success');
+            await loadUserAlerts();
+            cancelFormBtn.click();
+        } catch (error) {
+            showToast("Erreur lors de la sauvegarde de l'alerte.", 'error');
+            console.error(error);
+        } finally {
+            hideGlobalLoader();
+        }
+    });
+
+    document.getElementById('alert-list').addEventListener('click', async (e) => {
+        const { currentUser, userAlerts } = getState();
+        const alertItem = e.target.closest('.alert-item');
+        if (!alertItem) return;
+
+        const alertId = alertItem.dataset.alertId;
+
+        if(e.target.closest('.edit-alert-btn')) {
+            const alertToEdit = (userAlerts || []).find(a => a.id === alertId);
+            if(alertToEdit) {
+                document.getElementById('alert-id').value = alertToEdit.id;
+                document.getElementById('alert-keywords').value = alertToEdit.keywords.join(', ');
+                document.getElementById('alert-category').value = alertToEdit.categoryId || '';
+                document.getElementById('alert-radius').value = alertToEdit.radius;
+                createFormSection.classList.remove('hidden');
+                showFormBtn.classList.add('hidden');
+            }
+        }
+
+        if(e.target.closest('.delete-alert-btn')) {
+            showConfirmationModal('Voulez-vous vraiment supprimer cette alerte ?', async () => {
+                showGlobalLoader('Suppression...');
+                try {
+                    await deleteAlertService(currentUser.uid, alertId);
+                    showToast('Alerte supprimée.', 'success');
+                    await loadUserAlerts(); // Recharger la liste
+                } catch(error) {
+                    showToast('Erreur de suppression.', 'error');
+                } finally {
+                    hideGlobalLoader();
+                }
+            });
+        }
+    });
 }
 
 /**
@@ -71,20 +263,25 @@ function initMyAdsModal() {
     const myAdsModal = document.getElementById('my-ads-modal');
     myAdsModal.addEventListener('modal:open', loadUserAds);
 
+    // Bouton pour publier une annonce depuis la modale vide
+    document.getElementById('my-ads-publish-new-btn')?.addEventListener('click', () => {
+        closeModal('my-ads-modal');
+        openAdForm();
+    });
+
     const adList = document.getElementById('my-ads-list');
     adList.addEventListener('click', e => {
-        const editBtn = e.target.closest('.edit-my-ad-btn');
-        const deleteBtn = e.target.closest('.delete-my-ad-btn');
+        const adItem = e.target.closest('.my-ad-item');
+        if (!adItem) return;
 
-        if (editBtn) {
-            const adId = editBtn.closest('.my-ad-item').dataset.adId;
+        const adId = adItem.dataset.adId;
+        
+        if (e.target.closest('.edit-my-ad-btn')) {
             closeModal('my-ads-modal');
             openAdForm(adId);
         }
 
-        if (deleteBtn) {
-            const adItem = deleteBtn.closest('.my-ad-item');
-            const adId = adItem.dataset.adId;
+        if (e.target.closest('.delete-my-ad-btn')) {
             const adTitle = adItem.querySelector('.item-title').textContent;
             
             showConfirmationModal(`Voulez-vous vraiment supprimer l'annonce "${adTitle}" ?`, async () => {
@@ -92,7 +289,7 @@ function initMyAdsModal() {
                 try {
                     await deleteAd(adId);
                     showToast("Annonce supprimée.", "success");
-                    adItem.remove();
+                    adItem.remove(); // Suppression visuelle immédiate
                 } catch (error) {
                     showToast("Erreur lors de la suppression.", "error");
                 } finally {
@@ -101,6 +298,35 @@ function initMyAdsModal() {
             });
         }
     });
+}
+
+async function loadUserAlerts() {
+    const { currentUser } = getState();
+    if (!currentUser) return;
+    const listEl = document.getElementById('alert-list');
+    const placeholder = document.getElementById('no-alerts-placeholder');
+    listEl.innerHTML = '';
+    
+    try {
+        const alerts = await fetchAlerts(currentUser.uid);
+        setState({ userAlerts: alerts }); // Met en cache les alertes
+        placeholder.classList.toggle('hidden', alerts.length > 0);
+        
+        const template = document.getElementById('alert-item-template');
+        const { allCategories } = getState();
+
+        alerts.forEach(alert => {
+            const item = template.content.cloneNode(true).firstElementChild;
+            item.dataset.alertId = alert.id;
+            item.querySelector('.alert-keywords span').textContent = alert.keywords.join(', ');
+            const categoryName = allCategories.find(c => c.id === alert.categoryId)?.name_fr || 'Toutes';
+            item.querySelector('.alert-category span').textContent = categoryName;
+            item.querySelector('.alert-radius span').textContent = `${alert.radius} km`;
+            listEl.appendChild(item);
+        });
+    } catch (error) {
+        console.error("Erreur chargement des alertes:", error);
+    }
 }
 
 
@@ -135,6 +361,7 @@ async function loadUserAds() {
                 const statusBadge = item.querySelector('.item-status .status-badge');
                 statusBadge.textContent = ad.status === 'active' ? 'Active' : 'Inactive';
                 statusBadge.className = `status-badge status-${ad.status}`;
+                item.querySelector('.view-my-ad-btn').dataset.id = ad.id;
                 listEl.appendChild(item);
             });
         }
@@ -224,10 +451,13 @@ async function handleProfileFormSubmit(e) {
         }
 
         await Promise.all(promises);
-        showToast("Profil mis à jour avec succès !", "success");
-        toggleProfileEditMode(false);
+        
+        // Rafraîchir le profil depuis la source de vérité (Firestore)
         const updatedProfile = await fetchUserProfile(currentUser.uid);
         setState({ userProfile: updatedProfile });
+        
+        showToast("Profil mis à jour avec succès !", "success");
+        toggleProfileEditMode(false);
         
     } catch (error) {
         showToast("Erreur lors de la mise à jour.", "error");
@@ -271,14 +501,16 @@ function showConfirmationModal(message, onConfirm) {
 
     messageEl.textContent = message;
 
+    // Clonage pour purger les anciens écouteurs
     const newConfirmBtn = confirmBtn.cloneNode(true);
     confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
 
     const close = () => closeModal('confirmation-modal');
+    
     newConfirmBtn.addEventListener('click', () => {
         onConfirm();
         close();
-    });
+    }, { once: true });
     
     openModal('confirmation-modal');
 }
@@ -323,20 +555,27 @@ function setupAuthModal() {
 function switchAuthView(viewName) {
     const authModal = document.getElementById('auth-modal');
     if (!authModal) return;
+    
+    const views = authModal.querySelectorAll('.auth-form, .auth-view');
+    const titles = authModal.querySelectorAll('.modal-title');
+    const footerLinks = authModal.querySelectorAll('.auth-switch-link');
 
-    authModal.querySelectorAll('.auth-form, .auth-view, .modal-title').forEach(el => el.classList.add('hidden'));
+    views.forEach(el => el.classList.add('hidden'));
+    titles.forEach(el => el.classList.add('hidden'));
+    footerLinks.forEach(el => el.classList.add('hidden'));
     
     const viewMap = {
-        login: { viewId: 'login-form', titleId: 'auth-modal-title-login' },
-        signup: { viewId: 'signup-form', titleId: 'auth-modal-title-signup' },
-        reset: { viewId: 'reset-password-form', titleId: 'auth-modal-title-reset' },
-        'email-validation-view': { viewId: 'email-validation-view', titleId: 'auth-modal-title-validate-email' }
+        login: { viewId: 'login-form', titleId: 'auth-modal-title-login', footerId: 'auth-switch-to-signup-btn' },
+        signup: { viewId: 'signup-form', titleId: 'auth-modal-title-signup', footerId: 'auth-switch-to-login-btn' },
+        reset: { viewId: 'reset-password-form', titleId: 'auth-modal-title-reset', footerId: 'auth-switch-to-login-btn' },
+        'email-validation-view': { viewId: 'email-validation-view', titleId: 'auth-modal-title-validate-email', footerId: 'auth-switch-to-login-btn' }
     };
 
     const target = viewMap[viewName];
     if (target) {
         document.getElementById(target.viewId)?.classList.remove('hidden');
         document.getElementById(target.titleId)?.classList.remove('hidden');
+        document.getElementById(target.footerId)?.classList.remove('hidden');
     }
 }
 
@@ -350,7 +589,7 @@ function updateUIOnStateChange({ isLoggedIn, userProfile }) {
         profileAvatar.alt = `Profil de ${userProfile.username}`;
     } else {
         profileBtn.setAttribute('data-user-logged-in', 'false');
-        profileAvatar.src = 'https://placehold.co/32x32/e0e0e0/757575?text=U';
+        profileAvatar.src = 'avatar-default.svg';
         profileAvatar.alt = 'Se connecter';
     }
 }
@@ -377,12 +616,13 @@ export function openModal(modalId) {
     const protectedModals = ['profile-modal', 'my-ads-modal', 'ad-form-modal', 'alerts-modal', 'messages-modal', 'favorites-modal'];
     if (protectedModals.includes(modalId) && !isLoggedIn) {
         showToast("Veuillez vous connecter pour accéder à cette section.", "warning");
-        modalId = 'auth-modal';
+        modalId = 'auth-modal'; // Redirige vers la connexion
     }
 
     const modal = document.getElementById(modalId);
     if (!modal) return;
     
+    // Remplissage dynamique des listes déroulantes de catégories
     if (allCategories.length > 0) {
         if (modalId === 'ad-form-modal') {
             populateCategoryDropdowns(modal.querySelector('#ad-category'), allCategories);
@@ -400,12 +640,9 @@ export function openModal(modalId) {
     
     modal.dispatchEvent(new CustomEvent('modal:open'));
 
+    // Correction pour la carte dans la modale d'annonce
     if (modalId === 'ad-form-modal') {
-        setTimeout(() => {
-            if (window.adFormMap) {
-                window.adFormMap.invalidateSize();
-            }
-        }, 10);
+        invalidateAdFormMapSize();
     }
 }
 

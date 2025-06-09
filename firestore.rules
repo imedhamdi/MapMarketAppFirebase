@@ -1,18 +1,82 @@
-rules_version='2'
+rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      // This rule allows anyone with your database reference to view, edit,
-      // and delete all data in your database. It is useful for getting
-      // started, but it is configured to expire after 30 days because it
-      // leaves your app open to attackers. At that time, all client
-      // requests to your database will be denied.
-      //
-      // Make sure to write security rules for your app before that time, or
-      // else all client requests to your database will be denied until you
-      // update your rules.
-      allow read, write: if request.time < timestamp.date(2025, 7, 6);
+
+    // Helper function to check if a user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper function to check if the user is the owner of a document
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    // --- Collections Publiques ---
+
+    // Les catégories sont en lecture seule pour tous
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if false; // Géré par les scripts d'admin uniquement
+    }
+
+    // --- Collections Utilisateurs ---
+
+    // Chaque utilisateur ne peut lire et modifier que son propre profil
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if false; // La suppression est gérée par une Cloud Function planifiée
+    }
+
+    // Un utilisateur ne peut gérer que ses propres favoris
+    match /users/{userId}/favorites/{adId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Un utilisateur ne peut gérer que ses propres alertes
+    match /users/{userId}/alerts/{alertId} {
+      allow read, write, delete: if isOwner(userId);
+    }
+
+    // --- Collections d'Annonces ---
+
+    match /ads/{adId} {
+      // Tout le monde peut lire les annonces actives
+      allow read: if resource.data.status == 'active' || (isAuthenticated() && request.auth.uid == resource.data.sellerId);
+
+      // Seul un utilisateur authentifié peut créer une annonce
+      allow create: if isAuthenticated() && isOwner(request.resource.data.sellerId)
+                    && request.resource.data.title is string && request.resource.data.title.size() > 4
+                    && request.resource.data.price is number && request.resource.data.price >= 0;
+
+      // Seul le propriétaire peut mettre à jour ou supprimer son annonce
+      allow update, delete: if isAuthenticated() && isOwner(resource.data.sellerId);
+    }
+
+    // --- Collections de Messagerie ---
+
+    // Seuls les participants à un chat peuvent y accéder
+    match /chats/{chatId} {
+      allow read, update: if isAuthenticated() && request.auth.uid in resource.data.participants;
+      allow create: if isAuthenticated() && request.auth.uid in request.resource.data.participants;
+    }
+
+    match /chats/{chatId}/messages/{messageId} {
+      allow read, create: if isAuthenticated() && get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid]);
+      allow update, delete: if false; // Les messages ne sont ni modifiables ni supprimables
+    }
+
+    // --- Collections d'Avis ---
+
+    match /reviews/{reviewId} {
+        // Un utilisateur authentifié peut créer un avis
+        allow create: if isAuthenticated() && isOwner(request.resource.data.reviewerId);
+        // Personne ne peut modifier ou supprimer un avis (sauf via une fonction d'administration)
+        allow read: if true;
+        allow update, delete: if false;
     }
   }
 }

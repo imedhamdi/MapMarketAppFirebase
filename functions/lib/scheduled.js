@@ -1,4 +1,5 @@
 "use strict";
+// CHEMIN : functions/src/scheduled.ts
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -15,70 +16,64 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.cleanupInactiveUsers = void 0;
-const functions = __importStar(require("firebase-functions"));
+exports.cleanupinactiveusers = void 0;
+const functions = __importStar(require("firebase-functions/v2/scheduler"));
+const logger = __importStar(require("firebase-functions/logger"));
 const admin = __importStar(require("firebase-admin"));
-/**
- * Fonction planifiée pour s'exécuter tous les 30 jours.
- * Identifie et supprime les utilisateurs inactifs depuis plus de 6 mois.
- * ATTENTION: Action destructive. À utiliser avec précaution.
- */
-exports.cleanupInactiveUsers = functions
-    .region("europe-west1")
-    .pubsub.schedule("every 30 days")
-    .onRun(async (context) => {
+exports.cleanupinactiveusers = functions.onSchedule({
+    schedule: "every 30 days",
+    region: "europe-west1",
+}, async (event) => {
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
     const inactiveThreshold = admin.firestore.Timestamp.fromDate(sixMonthsAgo);
-    functions.logger.info(`Lancement du nettoyage des utilisateurs inactifs avant ${sixMonthsAgo.toISOString()}`);
+    logger.info(`Lancement du nettoyage des utilisateurs inactifs avant ${sixMonthsAgo.toISOString()}`);
     const inactiveUsersQuery = admin.firestore()
         .collection("users")
         .where("lastSeen", "<", inactiveThreshold);
     try {
         const snapshot = await inactiveUsersQuery.get();
         if (snapshot.empty) {
-            functions.logger.info("Aucun utilisateur inactif à nettoyer.");
-            return null;
+            logger.info("Aucun utilisateur inactif à nettoyer.");
+            return;
         }
+        const userIdsToDelete = snapshot.docs.map(doc => doc.id);
+        // Supprimer les documents Firestore en batch
         const batch = admin.firestore().batch();
-        const userIdsToDelete = [];
-        snapshot.forEach((doc) => {
-            const userId = doc.id;
-            functions.logger.warn(`Utilisateur ${userId} marqué pour suppression.`);
-            userIdsToDelete.push(userId);
-            // On pourrait ici archiver les données avant de les supprimer
-            batch.delete(doc.ref);
-        });
-        // Supprimer les documents Firestore
+        snapshot.forEach(doc => batch.delete(doc.ref));
         await batch.commit();
-        functions.logger.info(`${userIdsToDelete.length} documents utilisateur Firestore supprimés.`);
+        logger.info(`${userIdsToDelete.length} documents utilisateur Firestore supprimés.`);
         // Supprimer les comptes Firebase Auth
-        // Note: Ceci ne déclenche PAS les onDelete triggers de Firestore/Storage.
-        // Le nettoyage des données associées doit être fait manuellement.
         for (const userId of userIdsToDelete) {
             try {
                 await admin.auth().deleteUser(userId);
-                functions.logger.info(`Compte Auth de ${userId} supprimé.`);
+                logger.info(`Compte Auth de ${userId} supprimé.`);
             }
             catch (error) {
-                functions.logger.error(`Échec de la suppression du compte Auth de ${userId}`, error);
+                logger.error(`Échec de la suppression du compte Auth de ${userId}`, error);
             }
         }
-        return {
-            message: `Nettoyage terminé. ${userIdsToDelete.length} utilisateurs inactifs traités.`
-        };
     }
     catch (error) {
-        functions.logger.error("Erreur lors du nettoyage des utilisateurs inactifs:", error);
-        return null;
+        logger.error("Erreur lors du nettoyage des utilisateurs inactifs:", error);
     }
 });
 //# sourceMappingURL=scheduled.js.map

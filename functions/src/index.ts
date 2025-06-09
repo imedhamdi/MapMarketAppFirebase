@@ -1,20 +1,22 @@
-// /functions/src/index.ts
+// CHEMIN : functions/src/index.ts
+
 import * as admin from "firebase-admin";
 
 admin.initializeApp();
 
-// --- Triggers d'Authentification ---
-import { onUserCreate } from "./auth";
-export { onUserCreate };
+// Importer toutes les fonctions pour les exporter
+import { onusercreate } from "./auth.js";
+import { onadwrite, onmessagecreate, onreviewcreate, onfavoritewrite } from "./firestoreTriggers.js";
+import { onimageupload } from "./storageTriggers.js";
+import { cleanupinactiveusers } from "./scheduled.js";
 
-// --- Triggers Firestore ---
-import { onAdWrite, onMessageCreate, onReviewCreate, onFavoriteWrite } from "./firestoreTriggers";
-export { onAdWrite, onMessageCreate, onReviewCreate, onFavoriteWrite };
-
-// --- Triggers Storage (NOUVEAU) ---
-import { onImageUpload } from "./storageTriggers";
-export { onImageUpload };
-
-// --- Fonctions Planifiées ---
-import { cleanupInactiveUsers } from "./scheduled";
-export { cleanupInactiveUsers };
+// Exporter toutes les fonctions pour le déploiement
+export {
+    onusercreate,
+    onadwrite,
+    onmessagecreate,
+    onreviewcreate,
+    onfavoritewrite,
+    onimageupload,
+    cleanupinactiveusers
+};

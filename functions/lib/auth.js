@@ -1,4 +1,5 @@
 "use strict";
+// CHEMIN : functions/src/auth.ts
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -15,29 +16,33 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.onUserCreate = void 0;
-const functions = __importStar(require("firebase-functions"));
+exports.onusercreate = void 0;
+const auth_1 = require("firebase-functions/v2/auth");
+const logger = __importStar(require("firebase-functions/logger"));
 const admin = __importStar(require("firebase-admin"));
 const db = admin.firestore();
-/**
- * Se déclenche à la création d'un nouvel utilisateur Firebase Auth.
- * 1. Crée un document utilisateur correspondant dans Firestore avec des valeurs par défaut.
- * 2. L'envoi de l'email de vérification est géré côté client ou automatiquement par Firebase.
- */
-exports.onUserCreate = functions
-    .region("europe-west1")
-    .auth.user()
-    .onCreate(async (user) => {
+exports.onusercreate = (0, auth_1.onUserCreation)({ region: "europe-west1" }, async (event) => {
     var _a;
-    functions.logger.info(`Nouvel utilisateur créé: ${user.uid}, email: ${user.email}`);
+    const user = event.data;
+    logger.info(`Nouvel utilisateur créé: ${user.uid}, email: ${user.email}`);
     const newUserRef = db.collection("users").doc(user.uid);
     try {
         await newUserRef.set({
@@ -46,26 +51,15 @@ exports.onUserCreate = functions
             email: user.email,
             avatarUrl: user.photoURL || "",
             registrationDate: admin.firestore.FieldValue.serverTimestamp(),
-            stats: {
-                adsCount: 0,
-                favoritesCount: 0,
-                averageRating: 0,
-            },
-            settings: {
-                darkMode: false,
-                language: "fr",
-                notifications: {
-                    pushEnabled: true,
-                    emailEnabled: true,
-                },
-            },
+            stats: { adsCount: 0, favoritesCount: 0, averageRating: 0, reviews: { count: 0, sum: 0 } },
+            settings: { darkMode: false, language: "fr", notifications: { pushEnabled: true, emailEnabled: true } },
             lastSeen: admin.firestore.FieldValue.serverTimestamp(),
-            fcmTokens: [], // Pour stocker les jetons de notification
+            fcmTokens: [],
         });
-        functions.logger.info(`Document utilisateur créé avec succès pour ${user.uid}`);
+        logger.info(`Document utilisateur créé avec succès pour ${user.uid}`);
     }
     catch (error) {
-        functions.logger.error(`Erreur lors de la création du document pour l'utilisateur ${user.uid}:`, error);
+        logger.error(`Erreur lors de la création du document pour l'utilisateur ${user.uid}:`, error);
     }
 });
 //# sourceMappingURL=auth.js.map

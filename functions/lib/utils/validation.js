@@ -4,7 +4,7 @@
  * Ces fonctions peuvent être appelées depuis les Cloud Functions avant d'écrire en base.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.validateAdData = void 0;
+exports.validateAdData = validateAdData;
 /**
  * Valide les données d'une annonce.
  * @param {any} data Les données à valider.
@@ -23,6 +23,5 @@ function validateAdData(data) {
     // ... autres validations ...
     return { isValid: true };
 }
-exports.validateAdData = validateAdData;
 // Ajouter d'autres fonctions de validation au besoin...
 //# sourceMappingURL=validation.js.map

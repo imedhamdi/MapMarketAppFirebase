@@ -1,4 +1,12 @@
-// public/js/auth.js
+// CHEMIN : public/js/auth.js
+
+/**
+ * =================================================================
+ * MAPMARKET - GESTION DE L'AUTHENTIFICATION (auth.js)
+ * =================================================================
+ * @file Gère l'ensemble du cycle de vie de l'authentification utilisateur
+ * avec Firebase Auth, et la synchronisation avec l'état global de l'application.
+ */
 
 import {
     onAuthStateChanged,
@@ -11,40 +19,56 @@ import {
     updatePassword
 } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js";
 import { auth } from './firebase.js';
-import { setState } from './state.js';
+import { setState, getState } from './state.js';
 import { fetchUserProfile } from "./services.js";
 import { showToast, showGlobalLoader, hideGlobalLoader } from './utils.js';
 
 /**
- * L'écouteur principal. Il reste crucial pour maintenir la session
- * lors du rechargement de la page.
+ * Tente de récupérer un profil utilisateur plusieurs fois avant d'échouer.
+ * Utile pour gérer le délai de création du document par la Cloud Function.
+ * @param {string} userId - L'ID de l'utilisateur à récupérer.
+ * @param {number} retries - Le nombre de tentatives.
+ * @param {number} delay - Le délai entre les tentatives en ms.
+ * @returns {Promise<object|null>} Le profil utilisateur ou null.
+ */
+async function retryFetchProfile(userId, retries = 5, delay = 1000) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const profile = await fetchUserProfile(userId);
+            if (profile) return profile;
+            console.warn(`Profil pour ${userId} non trouvé, tentative ${i + 1}/${retries}...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+        } catch (error) {
+            console.error(`Erreur lors de la tentative de récupération du profil:`, error);
+        }
+    }
+    console.error(`Impossible de récupérer le profil pour ${userId} après ${retries} tentatives.`);
+    return null;
+}
+
+/**
+ * Met en place l'écouteur principal de Firebase Auth qui réagit aux changements
+ * d'état de connexion de l'utilisateur (connexion, déconnexion).
  */
 export function setupAuthListeners() {
     onAuthStateChanged(auth, async (user) => {
-        // Si l'état est déjà "loggé", c'est que handleLogin/handleSignUp vient de le faire.
-        // On évite un re-rendu inutile pour rendre l'UI plus fluide.
-        // Cette vérification est une micro-optimisation. Le code original fonctionne aussi.
-        if (user && getState().isLoggedIn) {
-             hideGlobalLoader();
-             return;
+        if (user && getState().currentUser?.uid === user.uid && getState().isLoggedIn) {
+            hideGlobalLoader();
+            return;
         }
 
         showGlobalLoader("Vérification de la session...");
         try {
             if (user) {
-                const userProfile = await fetchUserProfile(user.uid);
-                // La logique de fallback est une bonne pratique, on la garde.
-                if (!userProfile) {
-                    console.warn(`Profil pour ${user.uid} non trouvé, nouvel essai dans 2s.`);
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    const fallbackProfile = await fetchUserProfile(user.uid);
-                    setState({ currentUser: user, userProfile: fallbackProfile, isLoggedIn: !!fallbackProfile });
+                const userProfile = await retryFetchProfile(user.uid);
+                if (userProfile) {
+                    setState({ currentUser: user, userProfile, isLoggedIn: true });
+                    if (!user.emailVerified) {
+                        showToast("Vérifiez votre e-mail pour accéder à toutes les fonctionnalités.", "warning", 8000);
+                    }
                 } else {
-                    setState({ currentUser: user, userProfile: userProfile, isLoggedIn: true });
-                }
-
-                if (!user.emailVerified) {
-                    showToast("Veuillez vérifier votre e-mail pour accéder à toutes les fonctionnalités.", "warning", 8000);
+                    showToast("Votre profil n'a pas pu être chargé. Déconnexion.", "error");
+                    await signOut(auth);
                 }
             } else {
                 setState({ currentUser: null, userProfile: null, isLoggedIn: false });
@@ -61,7 +85,6 @@ export function setupAuthListeners() {
 
 /**
  * Gère l'inscription d'un nouvel utilisateur.
- * CORRIGÉ : Met à jour l'état immédiatement après la création.
  */
 export async function handleSignUp(email, password, username) {
     showGlobalLoader("Création du compte...");
@@ -70,17 +93,9 @@ export async function handleSignUp(email, password, username) {
         const user = userCredential.user;
         await updateProfile(user, { displayName: username });
 
-        // On attend que la Cloud Function onUserCreate ait eu le temps de créer le profil
-        // dans Firestore. 2.5 secondes est une attente pragmatique pour ce projet.
-        await new Promise(resolve => setTimeout(resolve, 2500));
-        const userProfile = await fetchUserProfile(user.uid);
-
-        // Mise à jour de l'état IMMÉDIATE, avant de fermer la modale
-        setState({ currentUser: user, userProfile: userProfile, isLoggedIn: true });
-
+        // La Cloud Function est déclenchée. onAuthStateChanged va gérer la suite.
         await sendEmailVerification(user);
         showToast("Inscription réussie ! Un email de vérification vous a été envoyé.", "success");
-
         return { success: true };
     } catch (error) {
         console.error("Erreur d'inscription:", error.code, error.message);
@@ -92,21 +107,15 @@ export async function handleSignUp(email, password, username) {
 }
 
 /**
- * Gère la connexion d'un utilisateur.
- * CORRIGÉ : Met à jour l'état immédiatement après la connexion.
+ * Gère la connexion d'un utilisateur existant.
  */
 export async function handleLogin(email, password) {
     showGlobalLoader("Connexion en cours...");
     try {
-        const userCredential = await signInWithEmailAndPassword(auth, email, password);
-        const user = userCredential.user;
-
-        // Récupération du profil et mise à jour de l'état IMMÉDIATE.
-        const userProfile = await fetchUserProfile(user.uid);
-        setState({ currentUser: user, userProfile: userProfile, isLoggedIn: true });
-
+        await signInWithEmailAndPassword(auth, email, password);
+        // onAuthStateChanged va gérer la mise à jour de l'état.
         showToast("Connexion réussie !", "success");
-        return { success: true }; // L'état est maintenant à jour.
+        return { success: true };
     } catch (error) {
         console.error("Erreur de connexion:", error.code, error.message);
         showToast(getAuthErrorMessage(error.code), "error");
@@ -116,12 +125,8 @@ export async function handleLogin(email, password) {
     }
 }
 
-
-// ... Le reste du fichier (handleLogout, handlePasswordReset, etc.) peut rester inchangé.
-// J'inclus la fin du fichier pour être complet.
-
 /**
- * Gère la déconnexion de l'utilisateur actuel.
+ * Gère la déconnexion de l'utilisateur.
  */
 export async function handleLogout() {
     try {
@@ -140,10 +145,10 @@ export async function handlePasswordReset(email) {
     showGlobalLoader("Envoi du lien...");
     try {
         await sendPasswordResetEmail(auth, email);
-        showToast("Lien de réinitialisation envoyé ! Veuillez consulter votre boîte mail.", "success");
+        showToast("Lien de réinitialisation envoyé ! Consultez votre boîte mail.", "success");
         return { success: true };
     } catch (error) {
-        console.error("Erreur de réinitialisation:", error.code);
+        console.error("Erreur de réinitialisation:", error.code, error.message);
         showToast(getAuthErrorMessage(error.code), "error");
         return { success: false, error: error.code };
     } finally {
@@ -152,12 +157,12 @@ export async function handlePasswordReset(email) {
 }
 
 /**
- * Renvoie l'e-mail de vérification à l'utilisateur actuellement connecté.
+ * Réenvoie l'e-mail de vérification à l'utilisateur actuellement connecté.
  */
 export async function handleResendVerificationEmail() {
     const user = auth.currentUser;
     if (!user) {
-        showToast("Aucun utilisateur n'est actuellement connecté.", "error");
+        showToast("Aucun utilisateur connecté.", "error");
         return { success: false };
     }
 
@@ -176,7 +181,7 @@ export async function handleResendVerificationEmail() {
 }
 
 /**
- * Gère la mise à jour du mot de passe de l'utilisateur connecté.
+ * Met à jour le mot de passe de l'utilisateur connecté.
  */
 export async function handleUpdatePassword(newPassword) {
     const user = auth.currentUser;
@@ -184,14 +189,14 @@ export async function handleUpdatePassword(newPassword) {
         showToast("Utilisateur non connecté.", "error");
         return { success: false };
     }
-    
+
     showGlobalLoader("Mise à jour du mot de passe...");
     try {
         await updatePassword(user, newPassword);
         showToast("Mot de passe mis à jour avec succès.", "success");
         return { success: true };
     } catch (error) {
-        console.error("Erreur de mise à jour du mot de passe:", error);
+        console.error("Erreur de mise à jour du mot de passe:", error.code);
         showToast(`Erreur : ${getAuthErrorMessage(error.code)}`, "error");
         return { success: false, error: error.code };
     } finally {
@@ -204,15 +209,15 @@ export async function handleUpdatePassword(newPassword) {
  */
 function getAuthErrorMessage(errorCode) {
     const messages = {
-        'auth/invalid-email': "L'adresse e-mail n'est pas au bon format.",
-        'auth/user-disabled': "Ce compte utilisateur a été désactivé.",
-        'auth/user-not-found': "Aucun compte n'est associé à cet e-mail.",
-        'auth/wrong-password': "Le mot de passe est incorrect.",
+        'auth/invalid-email': "L'adresse e-mail est invalide.",
+        'auth/user-disabled': "Ce compte a été désactivé.",
+        'auth/user-not-found': "Aucun utilisateur trouvé avec cet e-mail.",
+        'auth/wrong-password': "Mot de passe incorrect.",
         'auth/email-already-in-use': "Cette adresse e-mail est déjà utilisée.",
         'auth/weak-password': "Le mot de passe doit contenir au moins 6 caractères.",
-        'auth/operation-not-allowed': "Ce mode de connexion n'est pas activé.",
-        'auth/too-many-requests': "L'accès à ce compte a été temporairement bloqué. Réessayez plus tard.",
-        'auth/requires-recent-login': "Opération sensible. Veuillez vous déconnecter et vous reconnecter avant de réessayer.",
+        'auth/operation-not-allowed': "Cette opération n'est pas autorisée.",
+        'auth/too-many-requests': "Trop de tentatives. Veuillez réessayer dans quelques instants.",
+        'auth/requires-recent-login': "Cette action est sensible. Veuillez vous reconnecter avant de réessayer.",
     };
     return messages[errorCode] || "Une erreur inattendue est survenue. Veuillez réessayer.";
 }

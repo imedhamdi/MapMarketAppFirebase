@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
-        xintegrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA=="
+        integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA=="
         crossorigin="anonymous" referrerpolicy="no-referrer" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js"></script>
@@ -18,7 +18,7 @@
 </head>
 
 <body>
-    <div id="app-root" class="app-container" data-app-version="1.0.5">
+    <div id="app-root" class="app-container" data-app-version="2.0.0-fixed">
         <header id="main-header" class="sticky-header" role="banner" aria-label="En-tête principal">
             <div class="header-content">
                 <div class="logo-container">
@@ -87,8 +87,6 @@
                     aria-label="Carte des annonces">
                     <div id="map-view" class="map-leaflet-instance">
                         <div class="map-loader skeleton-map-loader" role="status" aria-live="polite">
-                            <p data-i18n="map.loading">Chargement de la carte...</p>
-                            <div class="spinner"></div>
                         </div>
                     </div>
                 </div>
@@ -201,7 +199,7 @@
                                     de passe</label>
                                 <input type="password" id="signup-password-confirm" name="passwordConfirm"
                                     class="form-control" required autocomplete="new-password" minlength="6"
-                                    aria-describedby="signup-password-confirm-error">
+                                    aria-describedby="signup-password-confirm-error" data-match="signup-password">
                                 <small id="signup-password-confirm-error" class="form-error-message"
                                     role="alert"></small>
                             </div>
@@ -259,7 +257,6 @@
                             aria-label="Fermer">&times;</button>
                     </div>
                     <div class="modal-body">
-                        <!-- Contenu des notifications ici -->
                         <p>Aucune notification pour le moment.</p>
                     </div>
                 </div>
@@ -277,14 +274,14 @@
                     </div>
                     <div class="modal-body" id="my-ads-list-container">
                         <div id="my-ads-loader" class="loader-container hidden" role="status">
-                            <p data-i18n="myAds.loading">Chargement de vos annonces...</p>
                             <div class="spinner"></div>
+                            <p data-i18n="myAds.loading">Chargement de vos annonces...</p>
                         </div>
                         <div id="no-my-ads-placeholder" class="placeholder-message hidden">
                             <i class="fa-regular fa-folder-open fa-3x"></i>
                             <p data-i18n="myAds.noAds">Vous n'avez publié aucune annonce pour le moment.</p>
                             <button id="my-ads-publish-new-btn" type="button" class="btn btn-primary"
-                                style="margin-top: var(--spacing-md);">
+                                style="margin-top: var(--spacing-md);" aria-controls="ad-form-modal">
                                 <i class="fa-solid fa-plus-circle"></i> <span data-i18n="myAds.publishFirstAd">Publier
                                     ma première annonce</span>
                             </button>
@@ -305,7 +302,7 @@
                                 </div>
                                 <div class="item-actions my-ad-actions">
                                     <button type="button" class="btn btn-sm btn-icon btn-secondary view-my-ad-btn"
-                                        aria-label="Voir l'annonce">
+                                        aria-label="Voir l'annonce" data-action="open-ad-detail">
                                         <i class="fa-solid fa-eye"></i>
                                     </button>
                                     <button type="button" class="btn btn-sm btn-icon btn-info edit-my-ad-btn"
@@ -346,14 +343,6 @@
                             </div>
                             <input type="file" id="avatar-upload-input" class="visually-hidden" accept="image/*"
                                 aria-label="Télécharger un nouvel avatar">
-                            <div style="display:flex; gap: var(--spacing-sm);">
-                                <button id="change-avatar-btn" type="button" class="btn btn-sm btn-secondary"
-                                    aria-controls="avatar-upload-input" data-i18n="profile.changeAvatar">Changer
-                                    d'avatar</button>
-                                <button id="remove-avatar-btn" type="button"
-                                    class="btn btn-sm btn-danger-outline hidden"
-                                    data-i18n="profile.removeAvatar">Supprimer</button>
-                            </div>
                         </div>
 
                         <form id="profile-form" novalidate data-firebase-user-profile>
@@ -383,6 +372,7 @@
                                         nouveau mot de passe</label>
                                     <input type="password" id="profile-confirm-password" name="confirmPassword"
                                         class="form-control" autocomplete="new-password" minlength="6"
+                                        data-match="profile-new-password"
                                         aria-describedby="profile-confirm-password-error">
                                     <small id="profile-confirm-password-error" class="form-error-message"
                                         role="alert"></small>
@@ -608,8 +598,8 @@
                     </div>
                     <div class="modal-body" id="ad-detail-body-content">
                         <div id="ad-detail-loader" class="loader-container" role="status">
-                            <p data-i18n="adDetail.loading">Chargement de l'annonce...</p>
                             <div class="spinner"></div>
+                            <p data-i18n="adDetail.loading">Chargement de l'annonce...</p>
                         </div>
 
                         <article id="ad-detail-content" class="hidden">
@@ -995,7 +985,7 @@
                         <form id="filters-form" novalidate>
                             <div class="form-group">
                                 <label for="filter-keywords" data-i18n="filters.keywords">Mots-clés</label>
-                                <input type="text" id="filter-keywords" name="keywords" class="form-control"
+                                <input type="search" id="filter-keywords" name="keywords" class="form-control"
                                     placeholder="Ex: vélo électrique, canapé cuir">
                             </div>
                             <div class="form-group">
@@ -1061,7 +1051,7 @@
                         <div id="onboarding-slide-1" class="onboarding-slide active" role="tabpanel"
                             aria-labelledby="onboarding-tab-1">
                             <div id="lottie-onboarding-animation-1" class="lottie-animation-container"
-                                aria-label="Animation découverte locale">Animation 1</div>
+                                aria-label="Animation découverte locale"></div>
                             <h3 data-i18n="onboarding.slide1Title">Découvrez localement</h3>
                             <p data-i18n="onboarding.slide1Text">Trouvez des trésors, services et événements près de
                                 chez vous grâce à notre carte interactive.</p>
@@ -1069,7 +1059,7 @@
                         <div id="onboarding-slide-2" class="onboarding-slide" role="tabpanel"
                             aria-labelledby="onboarding-tab-2" aria-hidden="true">
                             <div id="lottie-onboarding-animation-2" class="lottie-animation-container"
-                                aria-label="Animation vente facile">Animation 2</div>
+                                aria-label="Animation vente facile"></div>
                             <h3 data-i18n="onboarding.slide2Title">Vendez et proposez facilement</h3>
                             <p data-i18n="onboarding.slide2Text">Publiez vos annonces ou proposez vos services en
                                 quelques clics et touchez votre voisinage.</p>
@@ -1077,7 +1067,7 @@
                         <div id="onboarding-slide-3" class="onboarding-slide" role="tabpanel"
                             aria-labelledby="onboarding-tab-3" aria-hidden="true">
                             <div id="lottie-onboarding-animation-3" class="lottie-animation-container"
-                                aria-label="Animation alertes personnalisées">Animation 3</div>
+                                aria-label="Animation alertes personnalisées"></div>
                             <h3 data-i18n="onboarding.slide3Title">Restez Alerté(e)</h3>
                             <p data-i18n="onboarding.slide3Text">Créez des alertes personnalisées pour ne manquer aucune
                                 opportunité correspondant à vos recherches.</p>
@@ -1123,7 +1113,7 @@
                     </div>
                     <div id="micro-tutorial-body" class="modal-body text-center">
                         <div id="lottie-micro-tutorial-animation" class="lottie-animation-container"
-                            style="margin: 0 auto var(--spacing-md);">Animation Tutoriel</div>
+                            style="margin: 0 auto var(--spacing-md);"></div>
                         <p id="micro-tutorial-text"></p>
                     </div>
                     <div class="modal-footer" style="flex-direction: column; align-items: stretch;">

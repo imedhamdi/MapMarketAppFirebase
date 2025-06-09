@@ -1,4 +1,5 @@
 "use strict";
+// CHEMIN : functions/src/firestoreTriggers.ts
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -15,51 +16,60 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.onFavoriteWrite = exports.onReviewCreate = exports.onMessageCreate = exports.onAdWrite = void 0;
-// /functions/src/firestoreTriggers.ts
-const functions = __importStar(require("firebase-functions"));
+exports.onfavoritewrite = exports.onreviewcreate = exports.onmessagecreate = exports.onadwrite = void 0;
+const functions = __importStar(require("firebase-functions/v2/firestore"));
+const logger = __importStar(require("firebase-functions/logger"));
 const admin = __importStar(require("firebase-admin"));
 const algolia_1 = require("./algolia");
 const notifications_1 = require("./notifications");
 const validation_1 = require("./utils/validation");
 const db = admin.firestore();
 const storage = admin.storage();
-exports.onAdWrite = functions
-    .region("europe-west1")
-    .firestore.document("ads/{adId}")
-    .onWrite(async (change, context) => {
-    const adId = context.params.adId;
-    const beforeData = change.before.data();
-    const afterData = change.after.data();
+exports.onadwrite = functions.onDocumentWritten({ document: "ads/{adId}", region: "europe-west1" }, async (event) => {
+    var _a, _b, _c, _d;
+    const adId = event.params.adId;
+    const beforeData = (_a = event.data) === null || _a === void 0 ? void 0 : _a.before.data();
+    const afterData = (_b = event.data) === null || _b === void 0 ? void 0 : _b.after.data();
     // Suppression
-    if (!change.after.exists) {
+    if (!((_c = event.data) === null || _c === void 0 ? void 0 : _c.after.exists)) {
         if (!beforeData)
-            return null; // Retourne null pour la cohérence
+            return;
         await Promise.all([
             (0, algolia_1.deleteAd)(adId),
             db.collection("categories").doc(beforeData.categoryId).update({ adCount: admin.firestore.FieldValue.increment(-1) }),
             db.collection("users").doc(beforeData.sellerId).update({ 'stats.adsCount': admin.firestore.FieldValue.increment(-1) }),
-            storage.bucket().deleteFiles({ prefix: `ads/${beforeData.sellerId}/${adId}/` })
+            storage.bucket().deleteFiles({ prefix: `ads/${beforeData.sellerId}/${adId}/` }).catch(e => logger.error(`Echec de la suppression des fichiers pour l'annonce ${adId}`, e))
         ]);
-        functions.logger.info(`Annonce ${adId} et fichiers associés supprimés.`);
-        return null;
+        logger.info(`Annonce ${adId} et fichiers associés supprimés.`);
+        return;
     }
     // Création
-    if (!change.before.exists) {
+    if (!((_d = event.data) === null || _d === void 0 ? void 0 : _d.before.exists)) {
         if (!afterData)
-            return null;
+            return;
         const validation = (0, validation_1.validateAdData)(afterData);
         if (!validation.isValid) {
-            functions.logger.error(`Données de l'annonce ${adId} invalides:`, validation.message);
-            return db.collection('ads').doc(adId).delete();
+            logger.error(`Données de l'annonce ${adId} invalides:`, validation.message);
+            await db.collection('ads').doc(adId).delete();
+            return;
         }
         await Promise.all([
             (0, algolia_1.indexAd)(afterData, adId),
@@ -67,7 +77,7 @@ exports.onAdWrite = functions
             db.collection("categories").doc(afterData.categoryId).update({ adCount: admin.firestore.FieldValue.increment(1) }),
             (0, notifications_1.sendAlertsForNewAd)(afterData, adId)
         ]);
-        return null;
+        return;
     }
     // Mise à jour
     if (beforeData && afterData) {
@@ -79,19 +89,13 @@ exports.onAdWrite = functions
             await batch.commit();
         }
     }
-    // AJOUT: Le retour manquant qui corrige l'erreur
-    return null;
 });
-// ... (onMessageCreate et onReviewCreate restent identiques)
-exports.onMessageCreate = functions
-    .region("europe-west1")
-    .firestore.document("chats/{chatId}/messages/{messageId}")
-    .onCreate(async (snap, context) => {
-    // Le code existant est correct
-    const messageData = snap.data();
+exports.onmessagecreate = functions.onDocumentCreated({ document: "chats/{chatId}/messages/{messageId}", region: "europe-west1" }, async (event) => {
+    var _a;
+    const messageData = (_a = event.data) === null || _a === void 0 ? void 0 : _a.data();
     if (!messageData)
         return;
-    const { chatId } = context.params;
+    const { chatId } = event.params;
     const chatRef = db.collection("chats").doc(chatId);
     const chatDoc = await chatRef.get();
     const chatData = chatDoc.data();
@@ -108,12 +112,9 @@ exports.onMessageCreate = functions
         updatedAt: messageData.sentAt,
     });
 });
-exports.onReviewCreate = functions
-    .region("europe-west1")
-    .firestore.document("reviews/{reviewId}")
-    .onCreate(async (snap) => {
-    // Le code existant est correct
-    const reviewData = snap.data();
+exports.onreviewcreate = functions.onDocumentCreated({ document: "reviews/{reviewId}", region: "europe-west1" }, async (event) => {
+    var _a;
+    const reviewData = (_a = event.data) === null || _a === void 0 ? void 0 : _a.data();
     if (!reviewData)
         return;
     const { targetType, targetId, rating } = reviewData;
@@ -123,7 +124,7 @@ exports.onReviewCreate = functions
         if (!targetDoc.exists)
             return;
         const data = targetDoc.data();
-        if (!data)
+        if (!data || !data.stats)
             return;
         const oldStats = data.stats.reviews || { count: 0, sum: 0 };
         const newCount = oldStats.count + 1;
@@ -134,23 +135,18 @@ exports.onReviewCreate = functions
         });
     });
 });
-// AJOUT COMPLET: Le trigger manquant pour les favoris
-exports.onFavoriteWrite = functions
-    .region('europe-west1')
-    .firestore.document('users/{userId}/favorites/{adId}')
-    .onWrite(async (change, context) => {
-    const { userId, adId } = context.params;
+exports.onfavoritewrite = functions.onDocumentWritten({ document: "users/{userId}/favorites/{adId}", region: 'europe-west1' }, async (event) => {
+    var _a, _b, _c, _d;
+    const { userId, adId } = event.params;
     const adRef = db.collection('ads').doc(adId);
     const userRef = db.collection('users').doc(userId);
     // Cas 1 : Un favori est AJOUTÉ
-    if (!change.before.exists && change.after.exists) {
-        functions.logger.info(`Utilisateur ${userId} a ajouté l'annonce ${adId} en favori.`);
-        // Utilise une transaction pour garantir que les deux compteurs sont mis à jour
+    if (!((_a = event.data) === null || _a === void 0 ? void 0 : _a.before.exists) && ((_b = event.data) === null || _b === void 0 ? void 0 : _b.after.exists)) {
+        logger.info(`Utilisateur ${userId} a ajouté l'annonce ${adId} en favori.`);
         await db.runTransaction(async (tx) => {
             tx.update(adRef, { 'stats.favorites': admin.firestore.FieldValue.increment(1) });
             tx.update(userRef, { 'stats.favoritesCount': admin.firestore.FieldValue.increment(1) });
         });
-        // Notifie le vendeur de l'annonce
         const adSnap = await adRef.get();
         const adData = adSnap.data();
         if (adData && adData.sellerId && adData.sellerId !== userId) {
@@ -158,8 +154,8 @@ exports.onFavoriteWrite = functions
         }
         // Cas 2: Un favori est SUPPRIMÉ
     }
-    else if (change.before.exists && !change.after.exists) {
-        functions.logger.info(`Utilisateur ${userId} a retiré l'annonce ${adId} de ses favoris.`);
+    else if (((_c = event.data) === null || _c === void 0 ? void 0 : _c.before.exists) && !((_d = event.data) === null || _d === void 0 ? void 0 : _d.after.exists)) {
+        logger.info(`Utilisateur ${userId} a retiré l'annonce ${adId} de ses favoris.`);
         await db.runTransaction(async (tx) => {
             tx.update(adRef, { 'stats.favorites': admin.firestore.FieldValue.increment(-1) });
             tx.update(userRef, { 'stats.favoritesCount': admin.firestore.FieldValue.increment(-1) });

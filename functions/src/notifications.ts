@@ -1,16 +1,13 @@
+// CHEMIN : functions/src/notifications.ts
+
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import { getDistance } from "./utils/geo";
+import { MulticastMessage } from "firebase-admin/messaging";
 
 const db = admin.firestore();
 const messaging = admin.messaging();
 
-/**
- * Envoie une notification push pour un nouveau message.
- * @param messageData Données du message.
- * @param participants IDs des participants au chat.
- * @param chatId L'ID du chat pour le lien profond.
- */
 export async function sendNewMessageNotification(
     messageData: admin.firestore.DocumentData,
     participants: string[],
@@ -38,26 +35,28 @@ export async function sendNewMessageNotification(
         return;
     }
 
-    const payload: admin.messaging.MessagingPayload = {
+    const payload: MulticastMessage = {
+        tokens,
         notification: {
             title: `Nouveau message de ${senderName}`,
             body: messageData.text.length > 100 ? `${messageData.text.substring(0, 97)}...` : messageData.text,
-            icon: senderDoc.data()?.avatarUrl || "/assets/icons/icon-192x192.png",
-            click_action: `/messages?chatId=${chatId}`,
         },
-        data: { type: "NEW_MESSAGE", chatId: chatId },
+        webpush: {
+            notification: {
+                icon: senderDoc.data()?.avatarUrl || "/assets/icons/icon-192x192.png",
+            },
+            fcmOptions: {
+                link: `/messages?chatId=${chatId}`
+            }
+        },
+        data: { type: "NEW_MESSAGE", chatId },
     };
     
-    await messaging.sendToDevice(tokens, payload).catch(error => {
+    await messaging.sendEachForMulticast(payload).catch((error: Error) => {
         functions.logger.error("Erreur d'envoi de notif message:", error);
     });
 }
 
-/**
- * Cherche les alertes correspondantes à une nouvelle annonce et notifie les utilisateurs.
- * @param adData Données de la nouvelle annonce.
- * @param adId ID de la nouvelle annonce.
- */
 export async function sendAlertsForNewAd(adData: admin.firestore.DocumentData, adId: string) {
     const usersSnapshot = await db.collection("users").get();
     if (usersSnapshot.empty) return;
@@ -74,20 +73,27 @@ export async function sendAlertsForNewAd(adData: admin.firestore.DocumentData, a
         for (const alertDoc of alertsSnapshot.docs) {
             const alert = alertDoc.data();
             if (doesAdMatchAlert(adData, alert)) {
-                const payload: admin.messaging.MessagingPayload = {
+                const payload: MulticastMessage = {
+                    tokens: userData.fcmTokens,
                     notification: {
                         title: "Nouvelle annonce pour votre alerte !",
                         body: adData.title,
-                        icon: adData.images?.[0] || "/assets/icons/icon-192x192.png",
-                        click_action: `/ad/${adId}`,
+                    },
+                    webpush: {
+                        notification: {
+                           icon: adData.images?.[0] || "/assets/icons/icon-192x192.png",
+                        },
+                        fcmOptions: {
+                            link: `/ad/${adId}`
+                        }
                     },
                     data: { type: "NEW_AD_ALERT", adId: adId },
                 };
                 
-                await messaging.sendToDevice(userData.fcmTokens, payload).catch(error => {
+                await messaging.sendEachForMulticast(payload).catch((error: Error) => {
                      functions.logger.error(`Erreur d'envoi notif alerte à ${userDoc.id}`, error);
                 });
-                break;
+                break; 
             }
         }
     }
@@ -114,25 +120,29 @@ function doesAdMatchAlert(ad: any, alert: any): boolean {
     return true;
 }
 
-/**
- * Notifie le vendeur lorsqu'une annonce est ajoutée aux favoris.
- */
 export async function sendAdFavoritedNotification(sellerId: string, adTitle: string, adId: string) {
     const sellerDoc = await db.collection('users').doc(sellerId).get();
     const sellerData = sellerDoc.data();
-    if (!sellerData?.fcmTokens || !sellerData.settings?.notifications?.pushEnabled) return;
+    if (!sellerData?.fcmTokens || sellerData.fcmTokens.length === 0 || !sellerData.settings?.notifications?.pushEnabled) return;
 
-    const payload: admin.messaging.MessagingPayload = {
+    const payload: MulticastMessage = {
+        tokens: sellerData.fcmTokens,
         notification: {
             title: 'Nouveau favori',
-            body: `${adTitle} a été ajouté à un favori`,
-            icon: sellerData.avatarUrl || '/assets/icons/icon-192x192.png',
-            click_action: `/ad/${adId}`
+            body: `${adTitle} a été ajouté aux favoris par un utilisateur`,
+        },
+        webpush: {
+            notification: {
+                icon: sellerData.avatarUrl || '/assets/icons/icon-192x192.png',
+            },
+            fcmOptions: {
+                link: `/ad/${adId}`
+            }
         },
         data: { type: 'FAVORITED', adId }
     };
 
-    await messaging.sendToDevice(sellerData.fcmTokens, payload).catch(err => {
+    await messaging.sendEachForMulticast(payload).catch((err: Error) => {
         functions.logger.error('Erreur envoi notif favori', err);
     });
 }

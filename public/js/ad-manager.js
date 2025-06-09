@@ -16,9 +16,22 @@ import { loadAndDisplayAds } from './map.js';
 
 let imageFiles = [];
 let isEditMode = false;
-window.adFormMap = null; // CORRECTION: Exposer la carte globalement pour `invalidateSize`
+let adFormMap = null; // Reste dans la portée du module
 let adFormMarker = null;
 
+/**
+ * Force le recalcul de la taille de la carte du formulaire.
+ * Doit être appelée après que la modale soit devenue visible.
+ */
+export function invalidateAdFormMapSize() {
+    if (adFormMap) {
+        setTimeout(() => adFormMap.invalidateSize(), 10);
+    }
+}
+
+/**
+ * Initialise les écouteurs d'événements pour le gestionnaire d'annonces.
+ */
 export function initAdManager() {
     const adForm = document.getElementById('ad-form');
     const adImagesInput = document.getElementById('ad-images-input');
@@ -36,8 +49,12 @@ export function initAdManager() {
     });
 }
 
+/**
+ * Ouvre et pré-remplit le formulaire d'annonce pour une création ou une édition.
+ * @param {string|null} adId - L'ID de l'annonce à éditer, ou null pour une création.
+ */
 export async function openAdForm(adId = null) {
-    const { isLoggedIn, allCategories } = getState();
+    const { isLoggedIn } = getState();
     if (!isLoggedIn) {
         showToast("Connectez-vous pour publier une annonce.", "error");
         return openModal('auth-modal');
@@ -46,7 +63,7 @@ export async function openAdForm(adId = null) {
     const adForm = document.getElementById('ad-form');
     const modalTitle = document.getElementById('ad-form-modal-title');
     const submitButton = document.getElementById('submit-ad-form-btn');
-    
+
     adForm.reset();
     document.getElementById('ad-image-previews-container').innerHTML = '';
     imageFiles = [];
@@ -59,29 +76,35 @@ export async function openAdForm(adId = null) {
         modalTitle.innerHTML = `<i class="fa-solid fa-pen"></i> Modifier l'annonce`;
         submitButton.innerHTML = `<i class="fa-solid fa-save"></i> Enregistrer les modifications`;
         showGlobalLoader("Chargement de l'annonce...");
-        adData = await fetchAdById(adId);
+        adData = await fetchAdById(adId, false); // Ne pas incrémenter la vue en édition
+        hideGlobalLoader();
         if (adData) {
             populateFormForEdit(adData);
             if (adData.location?.coordinates) {
                 initialCoords = [adData.location.coordinates.latitude, adData.location.coordinates.longitude];
             }
+        } else {
+            showToast("Annonce introuvable.", "error");
+            return;
         }
-        hideGlobalLoader();
     } else {
         modalTitle.innerHTML = `<i class="fa-solid fa-plus-circle"></i> Publier une Annonce`;
         submitButton.innerHTML = `<i class="fa-solid fa-paper-plane"></i> Publier l'annonce`;
         document.getElementById('ad-id').value = '';
     }
-    
-    // CORRECTION : On passe les catégories et la valeur sélectionnée à la fonction d'ouverture de la modale
+
     openModal('ad-form-modal');
-    
+
     initAdFormMap(initialCoords);
-    if(adData) {
+    if (adData) {
         document.querySelector('#ad-category').value = adData.categoryId;
     }
 }
 
+/**
+ * Remplit les champs du formulaire avec les données d'une annonce existante.
+ * @param {object} adData - Les données de l'annonce.
+ */
 function populateFormForEdit(adData) {
     document.getElementById('ad-id').value = adData.id;
     document.getElementById('ad-title').value = adData.title;
@@ -92,7 +115,7 @@ function populateFormForEdit(adData) {
         document.getElementById('ad-lat').value = adData.location.coordinates.latitude;
         document.getElementById('ad-lng').value = adData.location.coordinates.longitude;
     }
-    
+
     const previewContainer = document.getElementById('ad-image-previews-container');
     if (adData.images && adData.images.length > 0) {
         previewContainer.innerHTML = adData.images.map(url => `
@@ -104,29 +127,27 @@ function populateFormForEdit(adData) {
 }
 
 /**
- * CORRECTION : Logique de la carte améliorée.
+ * Initialise ou met à jour la carte dans le formulaire.
+ * @param {Array<number>} center - Les coordonnées [lat, lng] initiales.
  */
 function initAdFormMap(center) {
     const mapContainerId = 'ad-form-map-preview';
-    if (window.adFormMap) {
-        window.adFormMap.setView(center, 13);
+    if (adFormMap) {
+        adFormMap.setView(center, 13);
         adFormMarker.setLatLng(center);
     } else {
-        window.adFormMap = L.map(mapContainerId, { zoomControl: true, scrollWheelZoom: false }).setView(center, 13);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(window.adFormMap);
-        
-        // Création du marqueur draggable
-        adFormMarker = L.marker(center, { draggable: true }).addTo(window.adFormMap);
+        adFormMap = L.map(mapContainerId, { zoomControl: true, scrollWheelZoom: false }).setView(center, 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(adFormMap);
 
-        // Mise à jour des champs lors du déplacement
+        adFormMarker = L.marker(center, { draggable: true }).addTo(adFormMap);
+
         adFormMarker.on('dragend', function(e) {
             const { lat, lng } = e.target.getLatLng();
             updateLocationFields(lat, lng);
-            reverseGeocode(lat, lng); // Met à jour le champ d'adresse
+            reverseGeocode(lat, lng);
         });
-        
-        // Mise à jour en cliquant sur la carte
-        window.adFormMap.on('click', (e) => {
+
+        adFormMap.on('click', (e) => {
             adFormMarker.setLatLng(e.latlng);
             updateLocationFields(e.latlng.lat, e.latlng.lng);
             reverseGeocode(e.latlng.lat, e.latlng.lng);
@@ -135,28 +156,35 @@ function initAdFormMap(center) {
     updateLocationFields(center[0], center[1]);
 }
 
+/**
+ * Utilise la géolocalisation du navigateur pour positionner le marqueur.
+ */
 function handleUseCurrentLocation() {
-    if (!window.adFormMap) return;
+    if (!adFormMap) return;
     if (!navigator.geolocation) return showToast("La géolocalisation n'est pas supportée.", "error");
 
     showGlobalLoader("Recherche de votre position...");
     navigator.geolocation.getCurrentPosition(position => {
         const { latitude, longitude } = position.coords;
         const newLatLng = [latitude, longitude];
-        
-        window.adFormMap.setView(newLatLng, 16);
+
+        adFormMap.setView(newLatLng, 16);
         adFormMarker.setLatLng(newLatLng);
         updateLocationFields(latitude, longitude);
         reverseGeocode(latitude, longitude);
-        
+
         hideGlobalLoader();
         showToast("Position mise à jour !", "success");
-    }, error => {
+    }, () => {
         hideGlobalLoader();
         showToast("Impossible d'obtenir votre position.", "error");
     });
 }
 
+/**
+ * Géocode une adresse textuelle pour trouver ses coordonnées.
+ * @param {string} address - L'adresse à géocoder.
+ */
 async function geocodeAddress(address) {
     if (address.length < 5) return;
     const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`;
@@ -167,7 +195,7 @@ async function geocodeAddress(address) {
         if (data && data.length > 0) {
             const { lat, lon, display_name } = data[0];
             const newLatLng = [parseFloat(lat), parseFloat(lon)];
-            window.adFormMap.setView(newLatLng, 15);
+            adFormMap.setView(newLatLng, 15);
             adFormMarker.setLatLng(newLatLng);
             updateLocationFields(newLatLng[0], newLatLng[1]);
             document.getElementById('ad-location-address').value = display_name;
@@ -178,7 +206,9 @@ async function geocodeAddress(address) {
 }
 
 /**
- * AJOUT : Trouve l'adresse correspondant à des coordonnées.
+ * Trouve l'adresse correspondant à des coordonnées (géocodage inversé).
+ * @param {number} lat - Latitude.
+ * @param {number} lon - Longitude.
  */
 async function reverseGeocode(lat, lon) {
     const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`;
@@ -194,12 +224,18 @@ async function reverseGeocode(lat, lon) {
     }
 }
 
-
+/**
+ * Met à jour les champs cachés de latitude et longitude.
+ */
 function updateLocationFields(lat, lng) {
     document.getElementById('ad-lat').value = lat;
     document.getElementById('ad-lng').value = lng;
 }
 
+/**
+ * Gère la sélection de fichiers image et affiche les aperçus.
+ * @param {Event} event - L'événement de changement du champ de fichier.
+ */
 function handleImageSelection(event) {
     const previewContainer = document.getElementById('ad-image-previews-container');
     imageFiles = Array.from(event.target.files).slice(0, 5);
@@ -216,19 +252,23 @@ function handleImageSelection(event) {
     });
 }
 
+/**
+ * Gère la soumission du formulaire de création/édition d'annonce.
+ * @param {Event} e - L'événement de soumission.
+ */
 async function handleAdFormSubmit(e) {
     e.preventDefault();
     if (!validateForm(e.target).isValid) return;
-    
+
     const { currentUser } = getState();
     if (!currentUser) return showToast("Session expirée, veuillez vous reconnecter.", "error");
 
     showGlobalLoader(isEditMode ? "Mise à jour..." : "Publication...");
-    
+
     try {
         const formData = new FormData(e.target);
         const adId = formData.get('adId');
-        
+
         let imageUrls = [];
         if (imageFiles.length > 0) {
             const uploadPromises = imageFiles.map(file => uploadAdImage(file, currentUser.uid));
@@ -255,8 +295,7 @@ async function handleAdFormSubmit(e) {
         if (imageUrls.length > 0) {
             adData.images = imageUrls;
         } else if (isEditMode) {
-            // Conserve les anciennes images si aucune nouvelle n'est uploadée
-            const existingAd = await fetchAdById(adId, false); // false pour ne pas incrémenter les vues
+            const existingAd = await fetchAdById(adId, false);
             adData.images = existingAd.images || [];
         }
 

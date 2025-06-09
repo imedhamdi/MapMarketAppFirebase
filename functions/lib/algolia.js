@@ -15,18 +15,30 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteAd = exports.updateAd = exports.indexAd = void 0;
+exports.indexAd = indexAd;
+exports.updateAd = updateAd;
+exports.deleteAd = deleteAd;
 const functions = __importStar(require("firebase-functions"));
 const algoliasearch_1 = __importDefault(require("algoliasearch"));
 // Récupérer la configuration Algolia depuis les variables d'environnement des fonctions
@@ -47,7 +59,7 @@ function formatAdForAlgolia(adData) {
         description: adData.description,
         categoryId: adData.categoryId,
         price: adData.price,
-        imageUrl: adData.images ? adData.images[0] : null,
+        imageUrl: adData.images ? adData.images[0] : null, // On indexe juste la première image
         status: adData.status,
         sellerId: adData.sellerId,
         createdAt: adData.createdAt.toMillis(), // Algolia préfère les timestamps numériques
@@ -78,7 +90,6 @@ async function indexAd(adData, adId) {
         functions.logger.error(`Erreur lors de l'indexation de l'annonce ${adId}:`, error);
     }
 }
-exports.indexAd = indexAd;
 /**
  * Met à jour une annonce dans l'index Algolia.
  * @param {FirebaseFirestore.DocumentData} adData Données de l'annonce.
@@ -96,7 +107,6 @@ async function updateAd(adData, adId) {
         functions.logger.error(`Erreur lors de la mise à jour de l'annonce ${adId}:`, error);
     }
 }
-exports.updateAd = updateAd;
 /**
  * Supprime une annonce de l'index Algolia.
  * @param {string} adId ID de l'annonce.
@@ -111,5 +121,4 @@ async function deleteAd(adId) {
         functions.logger.error(`Erreur lors de la suppression de l'annonce ${adId}:`, error);
     }
 }
-exports.deleteAd = deleteAd;
 //# sourceMappingURL=algolia.js.map
