@@ -55,17 +55,26 @@ export const fetchCategories = async () => {
     }
 };
 
-export const fetchAds = async (filters = {}) => {
+// OPTIMISATION : Ajout d'une fonction paginée utilisant limit() et startAfter()
+export const fetchAds = async (filters = {}, cursor = null, perPage = 20) => {
     let q = query(collection(db, "ads"), where("status", "==", "active"));
     if (filters.category) {
         q = query(q, where("categoryId", "==", filters.category));
     }
+
     const sortBy = filters.sortBy || "createdAt_desc";
     const [sortField, sortDirection] = sortBy.split('_');
-    q = query(q, orderBy(sortField, sortDirection));
-    
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    q = query(q, orderBy(sortField, sortDirection), limit(perPage));
+
+    if (cursor) {
+        q = query(q, startAfter(cursor));
+    }
+
+    const snapshot = await getDocs(q);
+    return {
+        ads: snapshot.docs.map(d => ({ id: d.id, ...d.data() })),
+        lastVisible: snapshot.docs[snapshot.docs.length - 1] || null
+    };
 };
 
 /**
@@ -73,11 +82,24 @@ export const fetchAds = async (filters = {}) => {
  * @param {string} userId - L'ID de l'utilisateur.
  * @returns {Promise<Array>} Une liste des annonces de l'utilisateur.
  */
-export const fetchUserAds = async (userId) => {
-    if (!userId) return [];
-    const q = query(collection(db, "ads"), where("sellerId", "==", userId), orderBy("createdAt", "desc"));
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+export const fetchUserAds = async (userId, cursor = null, perPage = 20) => {
+    if (!userId) return { ads: [], lastVisible: null };
+    let q = query(
+        collection(db, "ads"),
+        where("sellerId", "==", userId),
+        orderBy("createdAt", "desc"),
+        limit(perPage)
+    );
+
+    if (cursor) {
+        q = query(q, startAfter(cursor));
+    }
+
+    const snapshot = await getDocs(q);
+    return {
+        ads: snapshot.docs.map(d => ({ id: d.id, ...d.data() })),
+        lastVisible: snapshot.docs[snapshot.docs.length - 1] || null
+    };
 };
 
 /**
@@ -173,9 +195,11 @@ export const createChat = async (adId, sellerId) => {
 
 // --- Services de Favoris ---
 
-export const listenToFavorites = (userId, callback) => {
+// OPTIMISATION : Remplacement de onSnapshot par une récupération ponctuelle
+export const fetchFavorites = async (userId) => {
     const favsColRef = collection(db, `users/${userId}/favorites`);
-    return onSnapshot(favsColRef, (snapshot) => callback(snapshot.docs.map(doc => doc.id)));
+    const snap = await getDocs(favsColRef);
+    return snap.docs.map(doc => doc.id);
 };
 
 export const toggleFavorite = (userId, adId, isCurrentlyFavorite) => {

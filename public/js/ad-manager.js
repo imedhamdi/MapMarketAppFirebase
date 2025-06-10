@@ -12,7 +12,7 @@ import { showToast, showGlobalLoader, hideGlobalLoader, validateForm } from './u
 import { openModal, closeModal } from './ui.js';
 // Assurez-vous que 'db' et 'GeoPoint' sont bien exportés depuis firebase.js
 import { db, GeoPoint } from './firebase.js'; 
-import { createAd, updateAd, uploadAdImage, fetchAdById } from './services.js';
+import { createAd, updateAd, uploadAdImage, fetchAdById, fetchAds } from './services.js';
 import { getState } from './state.js';
 
 // =================================================================
@@ -297,24 +297,20 @@ export async function loadInitialAds() {
     console.log('Loading initial ads...');
 
     try {
-        const query = db.collection('ads')
-            .orderBy('createdAt', 'desc')
-            .limit(ADS_PER_PAGE);
+        // OPTIMISATION : récupération paginée via le service
+        const { ads, lastVisible } = await fetchAds({}, null, ADS_PER_PAGE);
 
-        const snapshot = await query.get();
-        
-        if (snapshot.empty) {
-            if(adListContainer) adListContainer.innerHTML = '<p>Aucune annonce trouvée.</p>';
-            if(loadMoreButton) loadMoreButton.style.display = 'none';
+        if (ads.length === 0) {
+            if (adListContainer) adListContainer.innerHTML = '<p>Aucune annonce trouvée.</p>';
+            if (loadMoreButton) loadMoreButton.style.display = 'none';
         } else {
-            const ads = snapshot.docs;
-            lastVisibleAd = ads[ads.length - 1];
+            lastVisibleAd = lastVisible;
             displayAds(ads);
-            if(loadMoreButton) loadMoreButton.style.display = 'block';
+            if (loadMoreButton) loadMoreButton.style.display = 'block';
         }
     } catch (error) {
         console.error("Error loading initial ads:", error);
-        if(adListContainer) adListContainer.innerHTML = '<p>Erreur lors du chargement des annonces.</p>';
+        if (adListContainer) adListContainer.innerHTML = '<p>Erreur lors du chargement des annonces.</p>';
     } finally {
         isLoading = false;
     }
@@ -331,19 +327,13 @@ async function loadMoreAds() {
     console.log('Loading more ads...');
     
     try {
-        const query = db.collection('ads')
-            .orderBy('createdAt', 'desc')
-            .startAfter(lastVisibleAd)
-            .limit(ADS_PER_PAGE);
+        const { ads, lastVisible } = await fetchAds({}, lastVisibleAd, ADS_PER_PAGE);
 
-        const snapshot = await query.get();
-
-        if (snapshot.empty) {
-            if(loadMoreButton) loadMoreButton.style.display = 'none';
+        if (ads.length === 0) {
+            if (loadMoreButton) loadMoreButton.style.display = 'none';
             console.log("No more ads to load.");
         } else {
-            const ads = snapshot.docs;
-            lastVisibleAd = ads[ads.length - 1];
+            lastVisibleAd = lastVisible;
             displayAds(ads);
         }
     } catch (error) {

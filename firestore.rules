@@ -2,50 +2,56 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-  
-    // Fonction helper pour vérifier si un utilisateur est authentifié
-    function isSignedIn() {
+
+    function signedIn() {
       return request.auth != null;
     }
 
-    // Fonction helper pour vérifier la propriété d'un document
     function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+      return signedIn() && request.auth.uid == userId;
     }
 
-    // Les profils utilisateurs : seul le propriétaire peut lire/écrire ses propres données
+    // Profils utilisateurs
     match /users/{userId} {
-      allow read, update: if isOwner(userId);
-      allow create: if isSignedIn();
+      allow read, update, delete: if isOwner(userId);
+      allow create: if signedIn() && request.auth.uid == userId;
     }
 
-    // Les annonces : tout le monde peut les lire, seul le propriétaire peut les modifier/supprimer
+    // Annonces accessibles publiquement
     match /ads/{adId} {
       allow read: if true;
-      allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
-      allow update, delete: if isOwner(resource.data.ownerId);
-    }
-    
-    // Les favoris d'un utilisateur sont entièrement privés
-    match /users/{userId}/favorites/{adId} {
-      allow read, write, delete: if isOwner(userId);
+      allow create: if signedIn() && request.resource.data.sellerId == request.auth.uid;
+      allow update, delete: if signedIn() && request.auth.uid == resource.data.sellerId;
     }
 
-    // Les conversations de chat : seuls les participants peuvent y accéder
+    // Favoris et alertes privés
+    match /users/{userId}/favorites/{favId} {
+      allow read, write: if isOwner(userId);
+    }
+    match /users/{userId}/alerts/{alertId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Chats et messages accessibles uniquement aux participants
     match /chats/{chatId} {
-      allow read, update, create: if isSignedIn() && request.auth.uid in resource.data.participants;
+      allow read, write: if signedIn() && request.auth.uid in resource.data.participants;
+    }
+    match /chats/{chatId}/messages/{messageId} {
+      allow read, create: if signedIn() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
     }
 
-    // Les messages dans une conversation : seuls les participants peuvent lire/écrire
-    match /chats/{chatId}/messages/{messageId} {
-      allow read, create: if isSignedIn() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
-      allow update, delete: if false; // On n'autorise pas la modification/suppression des messages
+    // Avis
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if signedIn();
     }
-    
-    // Les catégories sont en lecture seule pour tous les utilisateurs connectés
- match /categories/{categoryId} {
-  allow read: if true; // Tout le monde peut lire
-  allow write: if false; // Personne ne peut écrire depuis le client
-}
+
+    match /categories/{categoryId} {
+      allow read: if true;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
   }
 }

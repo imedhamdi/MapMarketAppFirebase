@@ -5,7 +5,7 @@ if (!admin.apps.length) {
 }
 
 // CORRECTION : Import des noms de fonctions corrects
-import { onUserCreate } from "./auth.js";
+import { onUserCreate } from "./auth";
 import { 
   onAdCreated,
   onAdUpdated,
@@ -13,9 +13,9 @@ import {
   onMessageCreated,
   onReviewCreated,
   onFavoriteWritten
-} from "./firestoreTriggers.js";
-import { compressUploadedImage } from "./storageTriggers.js";
-import { cleanupOrphanedImages } from "./scheduled.js";
+} from "./firestoreTriggers";
+import { compressUploadedImage } from "./storageTriggers";
+import { cleanupOrphanedImages } from "./scheduled";
 
 // CORRECTION : Export des fonctions avec les bons noms
 export {
