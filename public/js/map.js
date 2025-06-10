@@ -48,7 +48,7 @@ function initializeMap(mapId) {
 
 async function loadAndDisplayAds(filters = {}) {
     try {
-        const ads = await fetchAds(filters);
+        const { ads } = await fetchAds(filters);
         adsDataCache = ads; // Met en cache les annonces
         displayAdsOnMap(adsDataCache);
     } catch (error) {

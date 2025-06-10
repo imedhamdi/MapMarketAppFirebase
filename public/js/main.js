@@ -30,7 +30,14 @@ import { initChat } from './chat.js';
 async function initializeAppState() {
     try {
         showGlobalLoader("Chargement des données de l'application...");
-        const categories = await fetchCategories();
+        let categories = [];
+        const cached = sessionStorage.getItem('categoriesCache');
+        if (cached) {
+            categories = JSON.parse(cached);
+        } else {
+            categories = await fetchCategories();
+            sessionStorage.setItem('categoriesCache', JSON.stringify(categories));
+        }
         setState({ allCategories: categories });
         console.log("État initial de l'application chargé (catégories, etc.).");
     } catch (error) {
