@@ -1,11 +1,12 @@
 // src/auth.ts
-import * as functions from "firebase-functions";
+import { onUserCreated } from "firebase-functions/v2/identity";
 import * as logger from "firebase-functions/logger";
 import * as admin from "firebase-admin";
 
 const db = admin.firestore();
 
-export const onUserCreate = functions.auth.user().onCreate(async (user) => {
+export const onUserCreate = onUserCreated({ region: "europe-west1" }, async (event) => {
+  const user = event.data;
   logger.info(`Nouvel utilisateur créé: ${user.uid}, email: ${user.email}`);
 
   const newUserRef = db.collection("users").doc(user.uid);

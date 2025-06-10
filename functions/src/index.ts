@@ -15,7 +15,7 @@ import {
   onFavoriteWritten
 } from "./firestoreTriggers";
 import { compressUploadedImage } from "./storageTriggers";
-import { cleanupOrphanedImages } from "./scheduled";
+import { cleanupOrphanedImages, cleanupInactiveUsers } from "./scheduled";
 
 // CORRECTION : Export des fonctions avec les bons noms
 export {
@@ -34,5 +34,6 @@ export {
   compressUploadedImage,
   
   // Scheduled
-  cleanupOrphanedImages
+  cleanupOrphanedImages,
+  cleanupInactiveUsers
 };
