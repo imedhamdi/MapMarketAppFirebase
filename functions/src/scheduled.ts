@@ -1,48 +1,41 @@
-// CHEMIN : functions/src/scheduled.ts
+import * as functions from 'firebase-functions';
+import * as admin from 'firebase-admin';
 
-import * as functions from "firebase-functions/v2/scheduler";
-import * as logger from "firebase-functions/logger";
-import * as admin from "firebase-admin";
+// 7️⃣ Nettoyage des fichiers orphelins du Storage
+export const cleanupOrphanedImages = functions
+    .region('europe-west1')
+    .pubsub.schedule('every 24 hours') // S'exécute tous les jours
+    .onRun(async (context) => {
+        // 🔟 Log d'usage
+        functions.logger.info('[Scheduled Cleanup] Starting orphaned image cleanup job.');
 
-export const cleanupinactiveusers = functions.onSchedule({
-    schedule: "every 30 days",
-    region: "europe-west1",
-}, async (event) => {
-    const sixMonthsAgo = new Date();
-    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-    const inactiveThreshold = admin.firestore.Timestamp.fromDate(sixMonthsAgo);
+        const bucket = admin.storage().bucket();
+        const [files] = await bucket.getFiles({ prefix: 'ad-images/' }); // Assurez-vous que le préfixe est correct
 
-    logger.info(`Lancement du nettoyage des utilisateurs inactifs avant ${sixMonthsAgo.toISOString()}`);
-
-    const inactiveUsersQuery = admin.firestore()
-        .collection("users")
-        .where("lastSeen", "<", inactiveThreshold);
-
-    try {
-        const snapshot = await inactiveUsersQuery.get();
-        if (snapshot.empty) {
-            logger.info("Aucun utilisateur inactif à nettoyer.");
-            return;
-        }
-
-        const userIdsToDelete: string[] = snapshot.docs.map(doc => doc.id);
-
-        // Supprimer les documents Firestore en batch
-        const batch = admin.firestore().batch();
-        snapshot.forEach(doc => batch.delete(doc.ref));
-        await batch.commit();
-        logger.info(`${userIdsToDelete.length} documents utilisateur Firestore supprimés.`);
-
-        // Supprimer les comptes Firebase Auth
-        for (const userId of userIdsToDelete) {
-            try {
-                await admin.auth().deleteUser(userId);
-                logger.info(`Compte Auth de ${userId} supprimé.`);
-            } catch (error) {
-                logger.error(`Échec de la suppression du compte Auth de ${userId}`, error);
+        const activeImageUrls = new Set<string>();
+        const adsSnapshot = await admin.firestore().collection('ads').select('imageUrl').get();
+        adsSnapshot.forEach(doc => {
+            const imageUrl = doc.data().imageUrl;
+            if (imageUrl) {
+                activeImageUrls.add(imageUrl);
             }
-        }
-    } catch (error) {
-        logger.error("Erreur lors du nettoyage des utilisateurs inactifs:", error);
-    }
-});
+        });
+
+        let deletedCount = 0;
+        const deletionPromises = files.map(async (file) => {
+            const fileUrl = file.publicUrl();
+            if (!activeImageUrls.has(fileUrl)) {
+                try {
+                    await file.delete();
+                    deletedCount++;
+                    functions.logger.log(`[Scheduled Cleanup] Deleted orphaned file: ${file.name}`);
+                } catch (error) {
+                    functions.logger.error(`[Scheduled Cleanup] Failed to delete ${file.name}`, error);
+                }
+            }
+        });
+
+        await Promise.all(deletionPromises);
+        functions.logger.info(`[Scheduled Cleanup] Job finished. Deleted ${deletedCount} orphaned files.`);
+        return null;
+    });

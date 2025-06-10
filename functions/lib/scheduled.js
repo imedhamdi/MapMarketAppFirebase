@@ -1,5 +1,4 @@
 "use strict";
-// CHEMIN : functions/src/scheduled.ts
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -16,64 +15,50 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.cleanupinactiveusers = void 0;
-const functions = __importStar(require("firebase-functions/v2/scheduler"));
-const logger = __importStar(require("firebase-functions/logger"));
+exports.cleanupOrphanedImages = void 0;
+const functions = __importStar(require("firebase-functions"));
 const admin = __importStar(require("firebase-admin"));
-exports.cleanupinactiveusers = functions.onSchedule({
-    schedule: "every 30 days",
-    region: "europe-west1",
-}, async (event) => {
-    const sixMonthsAgo = new Date();
-    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-    const inactiveThreshold = admin.firestore.Timestamp.fromDate(sixMonthsAgo);
-    logger.info(`Lancement du nettoyage des utilisateurs inactifs avant ${sixMonthsAgo.toISOString()}`);
-    const inactiveUsersQuery = admin.firestore()
-        .collection("users")
-        .where("lastSeen", "<", inactiveThreshold);
-    try {
-        const snapshot = await inactiveUsersQuery.get();
-        if (snapshot.empty) {
-            logger.info("Aucun utilisateur inactif à nettoyer.");
-            return;
+// 7️⃣ Nettoyage des fichiers orphelins du Storage
+exports.cleanupOrphanedImages = functions
+    .region('europe-west1')
+    .pubsub.schedule('every 24 hours') // S'exécute tous les jours
+    .onRun(async (context) => {
+    // 🔟 Log d'usage
+    functions.logger.info('[Scheduled Cleanup] Starting orphaned image cleanup job.');
+    const bucket = admin.storage().bucket();
+    const [files] = await bucket.getFiles({ prefix: 'ad-images/' }); // Assurez-vous que le préfixe est correct
+    const activeImageUrls = new Set();
+    const adsSnapshot = await admin.firestore().collection('ads').select('imageUrl').get();
+    adsSnapshot.forEach(doc => {
+        const imageUrl = doc.data().imageUrl;
+        if (imageUrl) {
+            activeImageUrls.add(imageUrl);
         }
-        const userIdsToDelete = snapshot.docs.map(doc => doc.id);
-        // Supprimer les documents Firestore en batch
-        const batch = admin.firestore().batch();
-        snapshot.forEach(doc => batch.delete(doc.ref));
-        await batch.commit();
-        logger.info(`${userIdsToDelete.length} documents utilisateur Firestore supprimés.`);
-        // Supprimer les comptes Firebase Auth
-        for (const userId of userIdsToDelete) {
+    });
+    let deletedCount = 0;
+    const deletionPromises = files.map(async (file) => {
+        const fileUrl = file.publicUrl();
+        if (!activeImageUrls.has(fileUrl)) {
             try {
-                await admin.auth().deleteUser(userId);
-                logger.info(`Compte Auth de ${userId} supprimé.`);
+                await file.delete();
+                deletedCount++;
+                functions.logger.log(`[Scheduled Cleanup] Deleted orphaned file: ${file.name}`);
             }
             catch (error) {
-                logger.error(`Échec de la suppression du compte Auth de ${userId}`, error);
+                functions.logger.error(`[Scheduled Cleanup] Failed to delete ${file.name}`, error);
             }
         }
-    }
-    catch (error) {
-        logger.error("Erreur lors du nettoyage des utilisateurs inactifs:", error);
-    }
+    });
+    await Promise.all(deletionPromises);
+    functions.logger.info(`[Scheduled Cleanup] Job finished. Deleted ${deletedCount} orphaned files.`);
+    return null;
 });
 //# sourceMappingURL=scheduled.js.map

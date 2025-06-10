@@ -27,7 +27,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
-const functions = getFunctions(app, 'europe-west1');
+const functions = getFunctions(app, 'europe-central2');
 const messaging = getMessaging(app);
 
 // Ce bloc est correct et permet de se connecter aux émulateurs locaux.

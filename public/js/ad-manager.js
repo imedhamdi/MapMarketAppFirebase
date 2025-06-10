@@ -2,36 +2,34 @@
  * =================================================================
  * MAPMARKET - GESTIONNAIRE D'ANNONCES (ad-manager.js)
  * =================================================================
- * @file Ce fichier gère toute la logique du formulaire de création et
- * d'édition d'annonces, y compris la carte interactive, la gestion
- * des images, le géocodage, et la soumission des données à Firestore.
+ * @file Ce fichier gère :
+ * 1. La logique du formulaire de création/édition d'annonces.
+ * 2. Le chargement paginé et l'affichage de la liste des annonces.
  */
 
+// Imports pour la gestion du formulaire
 import { showToast, showGlobalLoader, hideGlobalLoader, validateForm } from './utils.js';
 import { openModal, closeModal } from './ui.js';
-import { GeoPoint } from './firebase.js';
+// Assurez-vous que 'db' et 'GeoPoint' sont bien exportés depuis firebase.js
+import { db, GeoPoint } from './firebase.js'; 
 import { createAd, updateAd, uploadAdImage, fetchAdById } from './services.js';
 import { getState } from './state.js';
-import { loadAndDisplayAds } from './map.js';
+
+// =================================================================
+// SECTION 1 : LOGIQUE DU FORMULAIRE DE CRÉATION/ÉDITION
+// =================================================================
 
 let imageFiles = [];
 let isEditMode = false;
-let adFormMap = null; // Reste dans la portée du module
+let adFormMap = null;
 let adFormMarker = null;
 
-/**
- * Force le recalcul de la taille de la carte du formulaire.
- * Doit être appelée après que la modale soit devenue visible.
- */
 export function invalidateAdFormMapSize() {
     if (adFormMap) {
         setTimeout(() => adFormMap.invalidateSize(), 10);
     }
 }
 
-/**
- * Initialise les écouteurs d'événements pour le gestionnaire d'annonces.
- */
 export function initAdManager() {
     const adForm = document.getElementById('ad-form');
     const adImagesInput = document.getElementById('ad-images-input');
@@ -49,10 +47,6 @@ export function initAdManager() {
     });
 }
 
-/**
- * Ouvre et pré-remplit le formulaire d'annonce pour une création ou une édition.
- * @param {string|null} adId - L'ID de l'annonce à éditer, ou null pour une création.
- */
 export async function openAdForm(adId = null) {
     const { isLoggedIn } = getState();
     if (!isLoggedIn) {
@@ -76,7 +70,7 @@ export async function openAdForm(adId = null) {
         modalTitle.innerHTML = `<i class="fa-solid fa-pen"></i> Modifier l'annonce`;
         submitButton.innerHTML = `<i class="fa-solid fa-save"></i> Enregistrer les modifications`;
         showGlobalLoader("Chargement de l'annonce...");
-        adData = await fetchAdById(adId, false); // Ne pas incrémenter la vue en édition
+        adData = await fetchAdById(adId, false);
         hideGlobalLoader();
         if (adData) {
             populateFormForEdit(adData);
@@ -94,17 +88,12 @@ export async function openAdForm(adId = null) {
     }
 
     openModal('ad-form-modal');
-
     initAdFormMap(initialCoords);
     if (adData) {
         document.querySelector('#ad-category').value = adData.categoryId;
     }
 }
 
-/**
- * Remplit les champs du formulaire avec les données d'une annonce existante.
- * @param {object} adData - Les données de l'annonce.
- */
 function populateFormForEdit(adData) {
     document.getElementById('ad-id').value = adData.id;
     document.getElementById('ad-title').value = adData.title;
@@ -126,10 +115,6 @@ function populateFormForEdit(adData) {
     }
 }
 
-/**
- * Initialise ou met à jour la carte dans le formulaire.
- * @param {Array<number>} center - Les coordonnées [lat, lng] initiales.
- */
 function initAdFormMap(center) {
     const mapContainerId = 'ad-form-map-preview';
     if (adFormMap) {
@@ -138,15 +123,12 @@ function initAdFormMap(center) {
     } else {
         adFormMap = L.map(mapContainerId, { zoomControl: true, scrollWheelZoom: false }).setView(center, 13);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(adFormMap);
-
         adFormMarker = L.marker(center, { draggable: true }).addTo(adFormMap);
-
         adFormMarker.on('dragend', function(e) {
             const { lat, lng } = e.target.getLatLng();
             updateLocationFields(lat, lng);
             reverseGeocode(lat, lng);
         });
-
         adFormMap.on('click', (e) => {
             adFormMarker.setLatLng(e.latlng);
             updateLocationFields(e.latlng.lat, e.latlng.lng);
@@ -156,23 +138,16 @@ function initAdFormMap(center) {
     updateLocationFields(center[0], center[1]);
 }
 
-/**
- * Utilise la géolocalisation du navigateur pour positionner le marqueur.
- */
 function handleUseCurrentLocation() {
     if (!adFormMap) return;
     if (!navigator.geolocation) return showToast("La géolocalisation n'est pas supportée.", "error");
-
     showGlobalLoader("Recherche de votre position...");
     navigator.geolocation.getCurrentPosition(position => {
         const { latitude, longitude } = position.coords;
-        const newLatLng = [latitude, longitude];
-
-        adFormMap.setView(newLatLng, 16);
-        adFormMarker.setLatLng(newLatLng);
+        adFormMap.setView([latitude, longitude], 16);
+        adFormMarker.setLatLng([latitude, longitude]);
         updateLocationFields(latitude, longitude);
         reverseGeocode(latitude, longitude);
-
         hideGlobalLoader();
         showToast("Position mise à jour !", "success");
     }, () => {
@@ -181,10 +156,6 @@ function handleUseCurrentLocation() {
     });
 }
 
-/**
- * Géocode une adresse textuelle pour trouver ses coordonnées.
- * @param {string} address - L'adresse à géocoder.
- */
 async function geocodeAddress(address) {
     if (address.length < 5) return;
     const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`;
@@ -205,11 +176,6 @@ async function geocodeAddress(address) {
     }
 }
 
-/**
- * Trouve l'adresse correspondant à des coordonnées (géocodage inversé).
- * @param {number} lat - Latitude.
- * @param {number} lon - Longitude.
- */
 async function reverseGeocode(lat, lon) {
     const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`;
     try {
@@ -224,22 +190,15 @@ async function reverseGeocode(lat, lon) {
     }
 }
 
-/**
- * Met à jour les champs cachés de latitude et longitude.
- */
 function updateLocationFields(lat, lng) {
     document.getElementById('ad-lat').value = lat;
     document.getElementById('ad-lng').value = lng;
 }
 
-/**
- * Gère la sélection de fichiers image et affiche les aperçus.
- * @param {Event} event - L'événement de changement du champ de fichier.
- */
 function handleImageSelection(event) {
     const previewContainer = document.getElementById('ad-image-previews-container');
     imageFiles = Array.from(event.target.files).slice(0, 5);
-    previewContainer.innerHTML = ''; // Vide les anciens aperçus
+    previewContainer.innerHTML = '';
     imageFiles.forEach(file => {
         const reader = new FileReader();
         reader.onload = e => {
@@ -252,10 +211,6 @@ function handleImageSelection(event) {
     });
 }
 
-/**
- * Gère la soumission du formulaire de création/édition d'annonce.
- * @param {Event} e - L'événement de soumission.
- */
 async function handleAdFormSubmit(e) {
     e.preventDefault();
     if (!validateForm(e.target).isValid) return;
@@ -268,10 +223,10 @@ async function handleAdFormSubmit(e) {
     try {
         const formData = new FormData(e.target);
         const adId = formData.get('adId');
-
         let imageUrls = [];
+
         if (imageFiles.length > 0) {
-            const uploadPromises = imageFiles.map(file => uploadAdImage(file, currentUser.uid));
+            const uploadPromises = imageFiles.map(file => uploadAdImage(file, currentUser.uid, adId));
             imageUrls = await Promise.all(uploadPromises);
         }
 
@@ -308,7 +263,8 @@ async function handleAdFormSubmit(e) {
         }
 
         closeModal('ad-form-modal');
-        loadAndDisplayAds();
+        // MODIFICATION : On appelle loadInitialAds pour recharger la liste depuis le début.
+        loadInitialAds(); 
     } catch (error) {
         console.error("Erreur formulaire annonce:", error);
         showToast(error.message || "Erreur de soumission.", "error");
@@ -316,3 +272,119 @@ async function handleAdFormSubmit(e) {
         hideGlobalLoader();
     }
 }
+
+
+// =================================================================
+// SECTION 2 : LOGIQUE DE CHARGEMENT ET D'AFFICHAGE DE LA LISTE
+// =================================================================
+
+let lastVisibleAd = null;
+let isLoading = false;
+const ADS_PER_PAGE = 10;
+
+const adListContainer = document.getElementById('ad-list-container');
+const loadMoreButton = document.getElementById('load-more-btn');
+
+/**
+ * Charge la première page d'annonces ou recharge à partir de zéro.
+ */
+export async function loadInitialAds() {
+    if (isLoading) return;
+    isLoading = true;
+    lastVisibleAd = null; 
+    if(adListContainer) adListContainer.innerHTML = ''; 
+    
+    console.log('Loading initial ads...');
+
+    try {
+        const query = db.collection('ads')
+            .orderBy('createdAt', 'desc')
+            .limit(ADS_PER_PAGE);
+
+        const snapshot = await query.get();
+        
+        if (snapshot.empty) {
+            if(adListContainer) adListContainer.innerHTML = '<p>Aucune annonce trouvée.</p>';
+            if(loadMoreButton) loadMoreButton.style.display = 'none';
+        } else {
+            const ads = snapshot.docs;
+            lastVisibleAd = ads[ads.length - 1];
+            displayAds(ads);
+            if(loadMoreButton) loadMoreButton.style.display = 'block';
+        }
+    } catch (error) {
+        console.error("Error loading initial ads:", error);
+        if(adListContainer) adListContainer.innerHTML = '<p>Erreur lors du chargement des annonces.</p>';
+    } finally {
+        isLoading = false;
+    }
+}
+
+/**
+ * Charge la page suivante d'annonces.
+ */
+async function loadMoreAds() {
+    if (isLoading || !lastVisibleAd) return;
+    isLoading = true;
+    if(loadMoreButton) loadMoreButton.textContent = 'Chargement...';
+
+    console.log('Loading more ads...');
+    
+    try {
+        const query = db.collection('ads')
+            .orderBy('createdAt', 'desc')
+            .startAfter(lastVisibleAd)
+            .limit(ADS_PER_PAGE);
+
+        const snapshot = await query.get();
+
+        if (snapshot.empty) {
+            if(loadMoreButton) loadMoreButton.style.display = 'none';
+            console.log("No more ads to load.");
+        } else {
+            const ads = snapshot.docs;
+            lastVisibleAd = ads[ads.length - 1];
+            displayAds(ads);
+        }
+    } catch (error) {
+        console.error("Error loading more ads:", error);
+    } finally {
+        isLoading = false;
+        if(loadMoreButton) loadMoreButton.textContent = 'Charger plus';
+    }
+}
+
+/**
+ * Fonction d'affichage des annonces (à adapter à votre HTML)
+ * @param {Array<object>} docs - Les documents d'annonces de Firestore.
+ */
+function displayAds(docs) {
+    if(!adListContainer) return;
+
+    docs.forEach(doc => {
+        const ad = doc.data();
+        const adElement = document.createElement('div');
+        adElement.className = 'ad-card'; // Assurez-vous d'avoir ce style dans votre CSS
+        adElement.innerHTML = `
+            <img src="${(ad.images && ad.images.length > 0) ? ad.images[0] : './assets/placeholder.jpg'}" alt="${ad.title}">
+            <h3>${ad.title}</h3>
+            <p class="price">${ad.price} €</p>
+            <p class="location">${ad.location?.address || 'Lieu non spécifié'}</p>
+        `;
+        adElement.addEventListener('click', () => {
+            // Redirigez vers la page de détail de l'annonce
+            window.location.href = `/ad-detail.html?id=${doc.id}`;
+        });
+        adListContainer.appendChild(adElement);
+    });
+}
+
+// L'initialisation de la liste se fait désormais dans votre fichier principal (ex: main.js)
+// où vous appelez loadInitialAds() et initAdManager() après le chargement du DOM.
+// Exemple pour main.js :
+// import { initAdManager, loadInitialAds } from './ad-manager.js';
+// document.addEventListener('DOMContentLoaded', () => {
+//     initAdManager();
+//     loadInitialAds();
+//     document.getElementById('load-more-btn')?.addEventListener('click', loadMoreAds);
+// });

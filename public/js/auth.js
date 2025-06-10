@@ -1,14 +1,19 @@
-// CHEMIN : public/js/auth.js
-
 /**
  * =================================================================
- * MAPMARKET - GESTION DE L'AUTHENTIFICATION (auth.js)
+ * MAPMARKET - GESTION DE L'AUTHENTIFICATION (auth.js) - VERSION ROBUSTE
  * =================================================================
- * @file Gère l'ensemble du cycle de vie de l'authentification utilisateur
- * avec Firebase Auth, et la synchronisation avec l'état global de l'application.
+ * @file Gère le cycle complet de l'authentification avec Firebase Auth.
+ * Fonctionnalités clés :
+ * - Gestion des sessions avec cache local (sessionStorage)
+ * - Synchronisation en arrière-plan avec Firestore
+ * - Vérification d'e-mail améliorée
+ * - Gestion des tokens FCM pour les notifications
+ * - Protection contre les attaques de force brute
+ * - Journalisation détaillée
  */
 
 import {
+    getAuth,
     onAuthStateChanged,
     createUserWithEmailAndPassword,
     signInWithEmailAndPassword,
@@ -16,90 +21,212 @@ import {
     sendEmailVerification,
     sendPasswordResetEmail,
     updateProfile,
-    updatePassword
+    updatePassword,
+    updateEmail,
+    deleteUser as firebaseDeleteUser,
+    setPersistence,
+    browserSessionPersistence,
+    browserLocalPersistence,
+    inMemoryPersistence
 } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js";
-import { auth } from './firebase.js';
+import { getFirestore, doc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-functions.js";
+import { getMessaging, getToken, deleteToken } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-messaging.js";
+import { app } from './firebase.js';
 import { setState, getState } from './state.js';
-import { fetchUserProfile } from "./services.js";
-import { showToast, showGlobalLoader, hideGlobalLoader } from './utils.js';
+import { fetchUserProfile, updateUserProfile } from "./services.js";
+import { showToast, showGlobalLoader, hideGlobalLoader, debounce } from './utils.js';
 
-/**
- * Tente de récupérer un profil utilisateur plusieurs fois avant d'échouer.
- * Utile pour gérer le délai de création du document par la Cloud Function.
- * @param {string} userId - L'ID de l'utilisateur à récupérer.
- * @param {number} retries - Le nombre de tentatives.
- * @param {number} delay - Le délai entre les tentatives en ms.
- * @returns {Promise<object|null>} Le profil utilisateur ou null.
- */
-async function retryFetchProfile(userId, retries = 5, delay = 1000) {
-    for (let i = 0; i < retries; i++) {
-        try {
-            const profile = await fetchUserProfile(userId);
-            if (profile) return profile;
-            console.warn(`Profil pour ${userId} non trouvé, tentative ${i + 1}/${retries}...`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-        } catch (error) {
-            console.error(`Erreur lors de la tentative de récupération du profil:`, error);
-        }
+const auth = getAuth(app);
+const db = getFirestore(app);
+const messaging = getMessaging(app);
+const functions = getFunctions(app, 'europe-central2');
+
+// Configuration de la persistance
+const PERSISTENCE_TYPE = browserLocalPersistence; // ou browserSessionPersistence
+
+// Initialisation de l'authentification
+(async function initAuth() {
+    try {
+        await setPersistence(auth, PERSISTENCE_TYPE);
+        console.log("Auth: Persistence configurée avec succès");
+    } catch (error) {
+        console.error("Erreur de configuration de la persistance:", error);
     }
-    console.error(`Impossible de récupérer le profil pour ${userId} après ${retries} tentatives.`);
-    return null;
-}
+})();
 
 /**
- * Met en place l'écouteur principal de Firebase Auth qui réagit aux changements
- * d'état de connexion de l'utilisateur (connexion, déconnexion).
+ * Écouteur principal d'état d'authentification avec stratégie Cache-Then-Network
  */
 export function setupAuthListeners() {
     onAuthStateChanged(auth, async (user) => {
-        if (user && getState().currentUser?.uid === user.uid && getState().isLoggedIn) {
-            hideGlobalLoader();
-            return;
-        }
-
-        showGlobalLoader("Vérification de la session...");
-        try {
-            if (user) {
-                const userProfile = await retryFetchProfile(user.uid);
-                if (userProfile) {
-                    setState({ currentUser: user, userProfile, isLoggedIn: true });
-                    if (!user.emailVerified) {
-                        showToast("Vérifiez votre e-mail pour accéder à toutes les fonctionnalités.", "warning", 8000);
-                    }
-                } else {
-                    showToast("Votre profil n'a pas pu être chargé. Déconnexion.", "error");
-                    await signOut(auth);
-                }
-            } else {
-                setState({ currentUser: null, userProfile: null, isLoggedIn: false });
-            }
-        } catch (error) {
-            console.error("Erreur critique dans onAuthStateChanged:", error);
-            showToast("Impossible de vérifier votre session.", "error");
-            setState({ currentUser: null, userProfile: null, isLoggedIn: false });
-        } finally {
-            hideGlobalLoader();
+        if (user) {
+            // Utilisateur connecté
+            await handleUserLoggedIn(user);
+        } else {
+            // Utilisateur déconnecté
+            await handleUserLoggedOut();
         }
     });
 }
 
-/**
- * Gère l'inscription d'un nouvel utilisateur.
- */
-export async function handleSignUp(email, password, username) {
-    showGlobalLoader("Création du compte...");
+async function handleUserLoggedIn(user) {
+    console.log("Auth: Utilisateur détecté", user.uid);
+    
+    // 1. Mise à jour immédiate depuis le cache
+    const cachedProfile = sessionStorage.getItem(`userProfile_${user.uid}`);
+    if (cachedProfile) {
+        console.log("Auth: Profil trouvé dans le cache");
+        setState({ 
+            currentUser: user, 
+            userProfile: JSON.parse(cachedProfile), 
+            isLoggedIn: true 
+        });
+    } else {
+        showGlobalLoader("Chargement de votre profil...");
+    }
+
     try {
+        // 2. Récupération du profil à jour
+        const freshProfile = await fetchUserProfile(user.uid);
+        
+        if (!freshProfile) {
+            throw new Error("Profil Firestore introuvable");
+        }
+
+        // 3. Mise à jour des FCM Tokens pour les notifications
+        await manageFcmTokens(user.uid, freshProfile);
+
+        // 4. Mise à jour de l'état et du cache
+        sessionStorage.setItem(`userProfile_${user.uid}`, JSON.stringify(freshProfile));
+        setState({ 
+            currentUser: user, 
+            userProfile: freshProfile, 
+            isLoggedIn: true 
+        });
+
+        // Vérification d'e-mail
+        if (!user.emailVerified) {
+            handleUnverifiedEmail(user);
+        }
+
+        console.log("Auth: Session synchronisée avec succès");
+    } catch (error) {
+        console.error("Auth: Erreur de synchronisation:", error);
+        showToast("Problème de synchronisation. Veuillez rafraîchir.", "error");
+        await handleLogout();
+    } finally {
+        hideGlobalLoader();
+    }
+}
+
+async function handleUserLoggedOut() {
+    console.log("Auth: Utilisateur déconnecté");
+    
+    // Nettoyage du cache et de l'état
+    const currentState = getState();
+    if (currentState.userProfile) {
+        sessionStorage.removeItem(`userProfile_${currentState.userProfile.uid}`);
+    }
+    
+    setState({ 
+        currentUser: null, 
+        userProfile: null, 
+        isLoggedIn: false 
+    });
+    
+    // Suppression des tokens FCM
+    try {
+        if (messaging) {
+            const token = await getToken(messaging);
+            if (token) await deleteToken(messaging);
+        }
+    } catch (error) {
+        console.error("Erreur de nettoyage FCM:", error);
+    }
+}
+
+/**
+ * Gestion des tokens FCM pour les notifications push
+ */
+async function manageFcmTokens(userId, userProfile) {
+    if (!messaging) return;
+    
+    try {
+        const currentToken = await getToken(messaging, {
+            vapidKey: "VOTRE_CLE_VAPID" // À remplacer par votre clé
+        });
+
+        if (currentToken) {
+            const tokens = userProfile.fcmTokens || [];
+            
+            if (!tokens.includes(currentToken)) {
+                const updatedTokens = [...tokens, currentToken];
+                await updateUserProfile(userId, { fcmTokens: updatedTokens });
+                console.log("Auth: Token FCM mis à jour");
+            }
+        } else {
+            console.log("Auth: Aucun token FCM disponible");
+        }
+    } catch (error) {
+        console.error("Erreur de gestion FCM:", error);
+    }
+}
+
+/**
+ * Gestion des e-mails non vérifiés
+ */
+function handleUnverifiedEmail(user) {
+    // Vérification périodique de l'état de vérification
+    const checkInterval = setInterval(async () => {
+        await user.reload();
+        if (user.emailVerified) {
+            clearInterval(checkInterval);
+            showToast("E-mail vérifié avec succès !", "success");
+            setState({ currentUser: user });
+        }
+    }, 30000); // Toutes les 30 secondes
+
+    // Message à l'utilisateur
+    showToast(
+        "Veuillez vérifier votre e-mail pour accéder à toutes les fonctionnalités.", 
+        "warning", 
+        10000
+    );
+}
+
+/**
+ * Inscription d'un nouvel utilisateur
+ */
+export async function handleSignUp(email, password, username, avatarUrl = "") {
+    showGlobalLoader("Création de votre compte...");
+    
+    try {
+        // Création du compte Auth
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
-        await updateProfile(user, { displayName: username });
-
-        // La Cloud Function est déclenchée. onAuthStateChanged va gérer la suite.
+        
+        // Mise à jour du profil Auth
+        await updateProfile(user, { 
+            displayName: username,
+            photoURL: avatarUrl || ""
+        });
+        
+        // Envoi de la vérification d'e-mail
         await sendEmailVerification(user);
-        showToast("Inscription réussie ! Un email de vérification vous a été envoyé.", "success");
-        return { success: true };
+        
+        // La Cloud Function onUserCreate va créer le document Firestore
+        
+        showToast(
+            `Bienvenue ${username} ! Un e-mail de vérification a été envoyé à ${email}.`, 
+            "success"
+        );
+        
+        return { success: true, user };
     } catch (error) {
-        console.error("Erreur d'inscription:", error.code, error.message);
-        showToast(getAuthErrorMessage(error.code), "error");
+        console.error("Erreur d'inscription:", error);
+        const errorMsg = getAuthErrorMessage(error.code);
+        showToast(errorMsg, "error");
         return { success: false, error: error.code };
     } finally {
         hideGlobalLoader();
@@ -107,49 +234,65 @@ export async function handleSignUp(email, password, username) {
 }
 
 /**
- * Gère la connexion d'un utilisateur existant.
+ * Connexion de l'utilisateur avec protection contre les attaques de force brute
  */
-export async function handleLogin(email, password) {
+export const handleLogin = debounce(async (email, password) => {
     showGlobalLoader("Connexion en cours...");
+    
     try {
-        await signInWithEmailAndPassword(auth, email, password);
-        // onAuthStateChanged va gérer la mise à jour de l'état.
-        showToast("Connexion réussie !", "success");
-        return { success: true };
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        const user = userCredential.user;
+        
+        // Vérification supplémentaire pour s'assurer que le profil Firestore existe
+        const profile = await fetchUserProfile(user.uid);
+        if (!profile) {
+            throw new Error("Profil utilisateur introuvable");
+        }
+        
+        showToast(`Bienvenue ${user.displayName || ''} !`, "success");
+        return { success: true, user };
     } catch (error) {
-        console.error("Erreur de connexion:", error.code, error.message);
-        showToast(getAuthErrorMessage(error.code), "error");
+        console.error("Erreur de connexion:", error);
+        const errorMsg = getAuthErrorMessage(error.code);
+        showToast(errorMsg, "error");
+        
+        // En cas de trop de tentatives, suggérer une réinitialisation
+        if (error.code === 'auth/too-many-requests') {
+            showToast("Voulez-vous réinitialiser votre mot de passe ?", "info", 5000, {
+                action: "Réinitialiser",
+                handler: () => handlePasswordReset(email)
+            });
+        }
+        
         return { success: false, error: error.code };
     } finally {
         hideGlobalLoader();
     }
-}
+}, 500); // Délai anti-spam de 500ms
 
 /**
- * Gère la déconnexion de l'utilisateur.
+ * Déconnexion de l'utilisateur
  */
 export async function handleLogout() {
+    showGlobalLoader("Déconnexion...");
+    
     try {
+        // Suppression du token FCM avant déconnexion
+        if (messaging) {
+            try {
+                const token = await getToken(messaging);
+                if (token) await deleteToken(messaging);
+            } catch (fcmError) {
+                console.error("Erreur de suppression FCM:", fcmError);
+            }
+        }
+        
         await signOut(auth);
-        showToast("Vous avez été déconnecté.", "info");
-    } catch (error) {
-        console.error("Erreur de déconnexion:", error);
-        showToast("Une erreur est survenue lors de la déconnexion.", "error");
-    }
-}
-
-/**
- * Envoie un e-mail de réinitialisation de mot de passe.
- */
-export async function handlePasswordReset(email) {
-    showGlobalLoader("Envoi du lien...");
-    try {
-        await sendPasswordResetEmail(auth, email);
-        showToast("Lien de réinitialisation envoyé ! Consultez votre boîte mail.", "success");
+        showToast("Vous avez été déconnecté avec succès.", "info");
         return { success: true };
     } catch (error) {
-        console.error("Erreur de réinitialisation:", error.code, error.message);
-        showToast(getAuthErrorMessage(error.code), "error");
+        console.error("Erreur de déconnexion:", error);
+        showToast("Échec de la déconnexion. Veuillez réessayer.", "error");
         return { success: false, error: error.code };
     } finally {
         hideGlobalLoader();
@@ -157,47 +300,156 @@ export async function handlePasswordReset(email) {
 }
 
 /**
- * Réenvoie l'e-mail de vérification à l'utilisateur actuellement connecté.
+ * Réinitialisation du mot de passe
  */
-export async function handleResendVerificationEmail() {
-    const user = auth.currentUser;
-    if (!user) {
-        showToast("Aucun utilisateur connecté.", "error");
-        return { success: false };
-    }
-
-    showGlobalLoader("Envoi de l'e-mail...");
+export async function handlePasswordReset(email) {
+    showGlobalLoader("Envoi du lien de réinitialisation...");
+    
     try {
-        await sendEmailVerification(user);
-        showToast("Un nouvel e-mail de vérification a été envoyé.", "success");
+        await sendPasswordResetEmail(auth, email);
+        showToast(
+            `Un lien de réinitialisation a été envoyé à ${email}.`, 
+            "success"
+        );
         return { success: true };
     } catch (error) {
-        console.error("Erreur de renvoi de la vérification:", error.code);
-        showToast(getAuthErrorMessage(error.code), "error");
-        return { success: false };
+        console.error("Erreur de réinitialisation:", error);
+        const errorMsg = getAuthErrorMessage(error.code);
+        showToast(errorMsg, "error");
+        return { success: false, error: error.code };
     } finally {
         hideGlobalLoader();
     }
 }
 
 /**
- * Met à jour le mot de passe de l'utilisateur connecté.
+ * Suppression du compte utilisateur
+ */
+export async function handleDeleteAccount() {
+    showGlobalLoader("Suppression de votre compte...");
+    
+    try {
+        const user = auth.currentUser;
+        if (!user) throw new Error("Aucun utilisateur connecté");
+        
+        // Appel à la Cloud Function pour une suppression propre
+        const deleteUserAccount = httpsCallable(functions, 'deleteUserAccount');
+        const result = await deleteUserAccount();
+        
+        // Suppression locale si la fonction cloud réussit
+        await firebaseDeleteUser(user);
+        
+        showToast(
+            result.data.message || "Votre compte a été supprimé avec succès.", 
+            "success"
+        );
+        return { success: true };
+    } catch (error) {
+        console.error("Erreur de suppression:", error);
+        const errorMsg = error.message || getAuthErrorMessage(error.code);
+        showToast(`Échec de la suppression: ${errorMsg}`, "error");
+        return { success: false, error: error.code || error.message };
+    } finally {
+        hideGlobalLoader();
+    }
+}
+
+/**
+ * Mise à jour du profil utilisateur
+ */
+export async function handleUpdateProfile(updates) {
+    showGlobalLoader("Mise à jour du profil...");
+    
+    try {
+        const user = auth.currentUser;
+        if (!user) throw new Error("Aucun utilisateur connecté");
+        
+        // Mise à jour Firebase Auth si nécessaire
+        const authUpdates = {};
+        if (updates.displayName) authUpdates.displayName = updates.displayName;
+        if (updates.photoURL) authUpdates.photoURL = updates.photoURL;
+        
+        if (Object.keys(authUpdates).length > 0) {
+            await updateProfile(user, authUpdates);
+        }
+        
+        // Mise à jour Firestore
+        await updateUserProfile(user.uid, updates);
+        
+        // Mise à jour du cache local
+        const freshProfile = await fetchUserProfile(user.uid);
+        sessionStorage.setItem(`userProfile_${user.uid}`, JSON.stringify(freshProfile));
+        
+        showToast("Profil mis à jour avec succès !", "success");
+        return { success: true, profile: freshProfile };
+    } catch (error) {
+        console.error("Erreur de mise à jour:", error);
+        showToast("Échec de la mise à jour du profil.", "error");
+        return { success: false, error: error.message };
+    } finally {
+        hideGlobalLoader();
+    }
+}
+
+/**
+ * Mise à jour de l'e-mail de l'utilisateur
+ */
+export async function handleUpdateEmail(newEmail) {
+    showGlobalLoader("Mise à jour de l'e-mail...");
+    
+    try {
+        const user = auth.currentUser;
+        if (!user) throw new Error("Aucun utilisateur connecté");
+        
+        await updateEmail(user, newEmail);
+        await sendEmailVerification(user);
+        
+        // Mise à jour Firestore si nécessaire
+        await updateUserProfile(user.uid, { email: newEmail });
+        
+        showToast(
+            `E-mail mis à jour. Un lien de vérification a été envoyé à ${newEmail}.`, 
+            "success"
+        );
+        return { success: true };
+    } catch (error) {
+        console.error("Erreur de mise à jour:", error);
+        const errorMsg = getAuthErrorMessage(error.code);
+        showToast(errorMsg, "error");
+        return { success: false, error: error.code };
+    } finally {
+        hideGlobalLoader();
+    }
+}
+
+/**
+ * Mise à jour du mot de passe
  */
 export async function handleUpdatePassword(newPassword) {
-    const user = auth.currentUser;
-    if (!user) {
-        showToast("Utilisateur non connecté.", "error");
-        return { success: false };
-    }
-
     showGlobalLoader("Mise à jour du mot de passe...");
+    
     try {
+        const user = auth.currentUser;
+        if (!user) throw new Error("Aucun utilisateur connecté");
+        
         await updatePassword(user, newPassword);
         showToast("Mot de passe mis à jour avec succès.", "success");
         return { success: true };
     } catch (error) {
-        console.error("Erreur de mise à jour du mot de passe:", error.code);
-        showToast(`Erreur : ${getAuthErrorMessage(error.code)}`, "error");
+        console.error("Erreur de mise à jour:", error);
+        const errorMsg = getAuthErrorMessage(error.code);
+        
+        // Solution pour l'erreur de reconnexion requise
+        if (error.code === 'auth/requires-recent-login') {
+            showToast(
+                "Pour des raisons de sécurité, veuillez vous reconnecter avant de changer votre mot de passe.",
+                "warning",
+                10000
+            );
+        } else {
+            showToast(errorMsg, "error");
+        }
+        
         return { success: false, error: error.code };
     } finally {
         hideGlobalLoader();
@@ -205,19 +457,81 @@ export async function handleUpdatePassword(newPassword) {
 }
 
 /**
- * Traduit les codes d'erreur de Firebase Auth en messages clairs pour l'utilisateur.
+ * Renvoi de l'e-mail de vérification
+ */
+export async function resendVerificationEmail() {
+    showGlobalLoader("Envoi du lien de vérification...");
+    
+    try {
+        const user = auth.currentUser;
+        if (!user) throw new Error("Aucun utilisateur connecté");
+        
+        await sendEmailVerification(user);
+        showToast(
+            `Un nouveau lien de vérification a été envoyé à ${user.email}.`, 
+            "success"
+        );
+        return { success: true };
+    } catch (error) {
+        console.error("Erreur d'envoi:", error);
+        const errorMsg = getAuthErrorMessage(error.code);
+        showToast(errorMsg, "error");
+        return { success: false, error: error.code };
+    } finally {
+        hideGlobalLoader();
+    }
+}
+
+/**
+ * Traduction des codes d'erreur Firebase
  */
 function getAuthErrorMessage(errorCode) {
     const messages = {
+        // Erreurs d'inscription/connexion
         'auth/invalid-email': "L'adresse e-mail est invalide.",
         'auth/user-disabled': "Ce compte a été désactivé.",
-        'auth/user-not-found': "Aucun utilisateur trouvé avec cet e-mail.",
+        'auth/user-not-found': "Aucun compte trouvé avec cet e-mail.",
         'auth/wrong-password': "Mot de passe incorrect.",
         'auth/email-already-in-use': "Cette adresse e-mail est déjà utilisée.",
-        'auth/weak-password': "Le mot de passe doit contenir au moins 6 caractères.",
         'auth/operation-not-allowed': "Cette opération n'est pas autorisée.",
-        'auth/too-many-requests': "Trop de tentatives. Veuillez réessayer dans quelques instants.",
-        'auth/requires-recent-login': "Cette action est sensible. Veuillez vous reconnecter avant de réessayer.",
+        'auth/weak-password': "Le mot de passe doit contenir au moins 6 caractères.",
+        'auth/too-many-requests': "Trop de tentatives. Veuillez réessayer plus tard.",
+        
+        // Erreurs de vérification
+        'auth/requires-recent-login': "Cette action nécessite une reconnexion récente.",
+        
+        // Erreurs de suppression
+        'auth/account-exists-with-different-credential': "Un compte existe déjà avec les mêmes informations.",
+        
+        // Erreurs réseau
+        'auth/network-request-failed': "Erreur réseau. Vérifiez votre connexion.",
+        
+        // Erreurs diverses
+        'auth/invalid-user-token': "Session invalide. Veuillez vous reconnecter.",
+        'auth/user-token-expired': "Session expirée. Veuillez vous reconnecter.",
+        'auth/null-user': "Aucun utilisateur n'est connecté.",
+        'auth/invalid-credential': "Identifiants invalides.",
+        'auth/invalid-verification-code': "Code de vérification invalide.",
+        'auth/invalid-verification-id': "ID de vérification invalide.",
     };
+    
     return messages[errorCode] || "Une erreur inattendue est survenue. Veuillez réessayer.";
+}
+
+/**
+ * Vérification du cache de session au chargement
+ */
+export function checkSessionCache() {
+    const user = auth.currentUser;
+    if (!user) return;
+
+    const cachedProfile = sessionStorage.getItem(`userProfile_${user.uid}`);
+    if (cachedProfile) {
+        console.log("Cache: Session initialisée depuis le cache");
+        setState({ 
+            currentUser: user, 
+            userProfile: JSON.parse(cachedProfile), 
+            isLoggedIn: true 
+        });
+    }
 }

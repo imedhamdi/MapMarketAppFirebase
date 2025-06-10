@@ -7,7 +7,7 @@
  */
 
 import { getState, subscribe, setState } from './state.js';
-import { handleLogout, handleLogin, handleSignUp, handlePasswordReset, handleUpdatePassword } from './auth.js';
+import { handleLogout, handleLogin, handleSignUp,handleDeleteAccount , handlePasswordReset, handleUpdatePassword } from './auth.js';
 import { validateForm, showToast, showGlobalLoader, hideGlobalLoader } from './utils.js';
 import { openAdForm, invalidateAdFormMapSize } from './ad-manager.js';
 import { updateUserProfile, uploadAvatar, fetchUserAds, deleteAd, createOrUpdateAlert, fetchAlerts, deleteAlert as deleteAlertService } from './services.js';
@@ -490,7 +490,59 @@ async function handleAvatarChange(event) {
         hideGlobalLoader();
     }
 }
+/**
+ * Met en place les écouteurs d'événements pour le formulaire de suppression de compte.
+ */
+export function setupDeleteAccountForm() {
+    // Récupération des éléments du DOM
+    const triggerBtn = document.getElementById('delete-account-trigger-btn');
+    const confirmationSection = document.getElementById('delete-account-confirmation-section');
+    const confirmCheckbox = document.getElementById('delete-account-confirm-checkbox');
+    const finalDeleteBtn = document.getElementById('confirm-delete-account-btn');
+    const cancelBtn = document.getElementById('cancel-delete-account-btn');
 
+    // S'assurer que tous les éléments existent avant d'ajouter les listeners
+    if (!triggerBtn || !confirmationSection || !confirmCheckbox || !finalDeleteBtn || !cancelBtn) {
+        // Si les éléments ne sont pas sur la page actuelle, ne rien faire.
+        return;
+    }
+
+    // --- LOGIQUE D'INTERACTION ---
+
+    // 1. Clic sur "Supprimer mon compte" -> Affiche la confirmation
+    triggerBtn.addEventListener('click', () => {
+        confirmationSection.classList.remove('hidden');
+        triggerBtn.classList.add('hidden');
+    });
+
+    // 2. Clic sur "Annuler" -> Masque la confirmation et réinitialise
+    cancelBtn.addEventListener('click', () => {
+        confirmationSection.classList.add('hidden');
+        triggerBtn.classList.remove('hidden');
+        // Réinitialiser l'état pour la prochaine fois
+        confirmCheckbox.checked = false;
+        finalDeleteBtn.disabled = true;
+    });
+
+    // 3. Clic sur la case à cocher -> Active ou désactive le bouton final
+    confirmCheckbox.addEventListener('change', () => {
+        finalDeleteBtn.disabled = !confirmCheckbox.checked;
+    });
+
+    // 4. Clic sur "Supprimer définitivement" -> Appelle la fonction de auth.js
+    finalDeleteBtn.addEventListener('click', async () => {
+        // Désactiver le bouton pour éviter les double-clics
+        finalDeleteBtn.disabled = true;
+        finalDeleteBtn.textContent = "Suppression..."; // Feedback visuel
+
+        await handleDeleteAccount();
+
+        // `onAuthStateChanged` va normalement recharger l'interface.
+        // Si l'utilisateur n'est pas redirigé, on réinitialise le formulaire.
+        cancelBtn.click(); // Simule un clic sur annuler pour réinitialiser
+        finalDeleteBtn.textContent = "Supprimer définitivement";
+    });
+}
 /**
  * Ouvre une modale de confirmation générique.
  */

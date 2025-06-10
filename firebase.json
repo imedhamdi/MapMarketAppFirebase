@@ -1,15 +1,4 @@
 {
-  "firestore": {
-    "rules": "firestore.rules",
-    "indexes": "firestore.indexes.json"
-  },
-  "functions": {
-    "source": "functions",
-    "runtime": "nodejs20"
-  },
-  "storage": {
-    "rules": "storage.rules"
-  },
   "hosting": {
     "public": "public",
     "ignore": [
@@ -22,27 +11,52 @@
         "source": "**",
         "destination": "/index.html"
       }
+    ],
+    "headers": [
+      {
+        "source": "**/@(js|css|svg|png|jpg|jpeg|gif|webp|ico)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, s-maxage=31536000"
+          }
+        ]
+      },
+      {
+         "source": "/**/service-worker.js",
+         "headers": [ {
+           "key": "Cache-Control",
+           "value": "no-cache"
+         }]
+      }
     ]
   },
-  "emulators": {
-    "auth": {
-      "port": 9099
-    },
-    "functions": {
-      "port": 5001
-    },
-    "firestore": {
-      "port": 8080
-    },
-    "hosting": {
-      "port": 5000
-    },
-    "storage": {
-      "port": 9199
-    },
-    "ui": {
-      "enabled": true,
-      "port": 4000
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firestore-debug.log"
+      ],
+      "runtime": "nodejs18"
     }
+  ],
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "emulators": {
+    "auth": { "port": 9099 },
+    "functions": { "port": 5001 },
+    "firestore": { "port": 8080 },
+    "hosting": { "port": 5000 },
+    "storage": { "port": 9199 },
+    "ui": { "enabled": true, "port": 4000 }
   }
 }

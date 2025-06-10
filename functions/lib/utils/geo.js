@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getDistance = getDistance;
+exports.getDistance = void 0;
 /**
  * Calcule la distance en kilomètres entre deux points GeoPoint (formule de Haversine).
  * @param {GeoPoint} coords1 Premier point.
@@ -21,6 +21,7 @@ function getDistance(coords1, coords2) {
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
 }
+exports.getDistance = getDistance;
 /**
  * Convertit des degrés en radians.
  * @param {number} value Valeur en degrés.

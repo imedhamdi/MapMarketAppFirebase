@@ -1,60 +1,54 @@
-// CHEMIN : functions/src/storageTriggers.ts
+import * as functions from 'firebase-functions';
+import * as admin from 'firebase-admin';
+import * as path from 'path';
+import * as os from 'os';
+import * as fs from 'fs';
+import sharp from 'sharp';
 
-import * as functions from "firebase-functions/v2/storage";
-import * as logger from "firebase-functions/logger";
-import * as admin from "firebase-admin";
-import * as path from "path";
-import * as os from "os";
-import * as fs from "fs-extra";
-import sharp from "sharp";
+// ⚠️ Remplacer par le nom de votre bucket Storage !
+const BUCKET_NAME = 'mapmarket-app.appspot.com'; 
 
-const THUMB_PREFIX = "thumb@";
-const THUMB_SIZES = [100, 400];
+// 3️⃣ Compression d'images
+export const compressUploadedImage = functions
+    .region('europe-west1')
+    .runWith({ timeoutSeconds: 300, memory: '1GB' }) // Allouer plus de ressources pour le traitement d'image
+    .storage.bucket(BUCKET_NAME)
+    .object()
+    .onFinalize(async (object) => {
+        const filePath = object.name;
+        const contentType = object.contentType;
 
-export const onimageupload = functions.onObjectFinalized({ region: "europe-west1" }, async (event) => {
-    const { bucket, name, contentType, metadata } = event.data;
+        // 🔟 Log d'usage
+        functions.logger.log(`[Storage Trigger] File detected: ${filePath}`);
 
-    if (!name || !contentType || metadata?.resized) {
-        logger.log("⛔ Fichier invalide ou déjà redimensionné.");
-        return;
-    }
+        if (!filePath || !contentType?.startsWith('image/') || path.basename(filePath).startsWith('thumb_')) {
+            functions.logger.log('Not an image or already a thumbnail. Exiting function.');
+            return null;
+        }
 
-    if (!name.startsWith("ads/") || !contentType.startsWith("image/")) {
-        logger.log(`ℹ️ Ignoré : ${name} n'est pas une image d'annonce.`);
-        return;
-    }
+        const bucket = admin.storage().bucket(object.bucket);
+        const tempFilePath = path.join(os.tmpdir(), path.basename(filePath));
 
-    const storageBucket = admin.storage().bucket(bucket);
-    const fileName = path.basename(name);
-    const tempFilePath = path.join(os.tmpdir(), fileName);
-    const fileDir = path.dirname(name);
+        try {
+            await bucket.file(filePath).download({ destination: tempFilePath });
+            functions.logger.log('Image downloaded to temporary directory.', tempFilePath);
 
-    try {
-        await storageBucket.file(name).download({ destination: tempFilePath });
-        logger.log(`📥 Téléchargé dans ${tempFilePath}`);
+            // Compresser l'image
+            const compressedBuffer = await sharp(tempFilePath)
+                .resize({ width: 1024, height: 1024, fit: 'inside', withoutEnlargement: true })
+                .jpeg({ quality: 80, progressive: true })
+                .toBuffer();
 
-        const uploadPromises = THUMB_SIZES.map(async (s) => {
-            const thumbFileName = `${THUMB_PREFIX}${s}_${fileName}`;
-            const thumbFilePath = path.join(os.tmpdir(), thumbFileName);
+            // Remplacer le fichier original par sa version compressée
+            await bucket.file(filePath).save(compressedBuffer, { metadata: { contentType: 'image/jpeg' } });
+            functions.logger.info(`[Image Compression] Successfully compressed ${filePath}.`);
 
-            await sharp(tempFilePath)
-                .resize(s, s, { fit: "inside" })
-                .toFile(thumbFilePath);
-
-            const dest = path.join(fileDir, "thumbs", thumbFileName);
-            await storageBucket.upload(thumbFilePath, {
-                destination: dest,
-                metadata: {
-                    contentType,
-                    metadata: { resized: "true" }, // Marqueur pour éviter les boucles
-                },
-            });
-            logger.log(`✅ Miniature ${s}px uploadée : ${dest}`);
-        });
-
-        await Promise.all(uploadPromises);
-    } finally {
-        // Nettoyage du fichier temporaire
-        await fs.remove(tempFilePath);
-    }
-});
+        } catch (error) {
+            functions.logger.error('[Image Compression] Failed.', error);
+        } finally {
+            // Nettoyer le fichier temporaire
+             fs.unlinkSync(tempFilePath);
+        }
+        
+        return null;
+    });
