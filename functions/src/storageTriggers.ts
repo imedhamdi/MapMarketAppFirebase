@@ -1,4 +1,5 @@
-import * as functions from 'firebase-functions';
+import { onObjectFinalized } from 'firebase-functions/v2/storage';
+import * as logger from 'firebase-functions/logger';
 import * as admin from 'firebase-admin';
 import * as path from 'path';
 import * as os from 'os';
@@ -9,20 +10,21 @@ import sharp from 'sharp';
 const BUCKET_NAME = 'mapmarket-app.appspot.com'; 
 
 // 3️⃣ Compression d'images
-export const compressUploadedImage = functions
-    .region('europe-west1')
-    .runWith({ timeoutSeconds: 300, memory: '1GB' }) // Allouer plus de ressources pour le traitement d'image
-    .storage.bucket(BUCKET_NAME)
-    .object()
-    .onFinalize(async (object) => {
+export const compressUploadedImage = onObjectFinalized({
+        region: 'europe-west1',
+        memory: '1GiB',
+        timeoutSeconds: 300,
+        bucket: BUCKET_NAME
+    }, async (event) => {
+        const object = event.data;
         const filePath = object.name;
         const contentType = object.contentType;
 
         // 🔟 Log d'usage
-        functions.logger.log(`[Storage Trigger] File detected: ${filePath}`);
+        logger.log(`[Storage Trigger] File detected: ${filePath}`);
 
         if (!filePath || !contentType?.startsWith('image/') || path.basename(filePath).startsWith('thumb_')) {
-            functions.logger.log('Not an image or already a thumbnail. Exiting function.');
+            logger.log('Not an image or already a thumbnail. Exiting function.');
             return null;
         }
 
@@ -31,7 +33,7 @@ export const compressUploadedImage = functions
 
         try {
             await bucket.file(filePath).download({ destination: tempFilePath });
-            functions.logger.log('Image downloaded to temporary directory.', tempFilePath);
+            logger.log('Image downloaded to temporary directory.', tempFilePath);
 
             // Compresser l'image
             const compressedBuffer = await sharp(tempFilePath)
@@ -41,10 +43,10 @@ export const compressUploadedImage = functions
 
             // Remplacer le fichier original par sa version compressée
             await bucket.file(filePath).save(compressedBuffer, { metadata: { contentType: 'image/jpeg' } });
-            functions.logger.info(`[Image Compression] Successfully compressed ${filePath}.`);
+            logger.info(`[Image Compression] Successfully compressed ${filePath}.`);
 
         } catch (error) {
-            functions.logger.error('[Image Compression] Failed.', error);
+            logger.error('[Image Compression] Failed.', error);
         } finally {
             // Nettoyer le fichier temporaire
              fs.unlinkSync(tempFilePath);
