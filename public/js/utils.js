@@ -3,7 +3,7 @@
  * MAPMARKET - FONCTIONS UTILITAIRES (utils.js)
  * =================================================================
  * Rôle : Fournir des fonctions d'aide et des classes réutilisables
- * pour la validation, les notifications et autres tâches courantes.
+ * pour la validation, les notifications, la manipulation du DOM et autres tâches courantes.
  */
 
 // --- Notifications Toast ---
@@ -16,9 +16,17 @@
  */
 export function showToast(message, type = 'info', duration = 4000) {
     const container = document.getElementById('toast-notifications-container');
-    if (!container) return;
+    if (!container) {
+        console.error("L'élément 'toast-notifications-container' est introuvable.");
+        return;
+    }
 
     const toastTemplate = document.getElementById('toast-notification-template');
+    if (!toastTemplate) {
+        console.error("Le template 'toast-notification-template' est introuvable.");
+        return;
+    }
+
     const toast = toastTemplate.content.cloneNode(true).firstElementChild;
 
     toast.dataset.toastType = type;
@@ -34,6 +42,7 @@ export function showToast(message, type = 'info', duration = 4000) {
     icon.className = `toast-icon fa-solid ${icons[type] || icons.info}`;
     container.appendChild(toast);
 
+    // Force le reflow pour que la transition CSS soit appliquée
     requestAnimationFrame(() => {
         toast.classList.add('toast-visible');
     });
@@ -46,9 +55,11 @@ export function showToast(message, type = 'info', duration = 4000) {
 }
 
 function hideToast(toast) {
+    if (!toast) return;
     toast.classList.remove('toast-visible');
     toast.addEventListener('transitionend', () => toast.remove(), { once: true });
 }
+
 
 // --- Chargeurs (Loaders) ---
 
@@ -69,6 +80,7 @@ export function hideGlobalLoader() {
     }
 }
 
+
 // --- Validation de Formulaires ---
 
 export function validateForm(formElement) {
@@ -79,6 +91,14 @@ export function validateForm(formElement) {
         const fieldName = input.name || input.id;
         const errorElement = formElement.querySelector(`#${input.id}-error`);
         let errorMessage = '';
+
+        // Reset previous errors
+        if (errorElement) {
+            errorElement.textContent = '';
+            errorElement.style.display = 'none';
+        }
+        input.setAttribute('aria-invalid', 'false');
+
 
         if (input.hasAttribute('required') && !input.value.trim()) {
             errorMessage = 'Ce champ est requis.';
@@ -101,22 +121,23 @@ export function validateForm(formElement) {
                 errorElement.style.display = 'block';
             }
             input.setAttribute('aria-invalid', 'true');
-        } else {
-            if (errorElement) {
-                errorElement.textContent = '';
-                errorElement.style.display = 'none';
-            }
-            input.setAttribute('aria-invalid', 'false');
         }
     });
 
     return { isValid, errors };
 }
 
+
 // --- Formatage ---
 
 export function formatRelativeTime(date) {
-    // Implémentation simplifiée. Pour une solution robuste, utiliser une librairie comme date-fns.
+    if (!(date instanceof Date)) {
+        date = new Date(date);
+    }
+    if (isNaN(date)) {
+        return '';
+    }
+    
     const now = new Date();
     const seconds = Math.round((now - date) / 1000);
     const minutes = Math.round(seconds / 60);
@@ -128,4 +149,24 @@ export function formatRelativeTime(date) {
     if (hours < 24) return `il y a ${hours} h`;
     if (days < 7) return `il y a ${days} j`;
     return `le ${date.toLocaleDateString('fr-FR')}`;
+}
+
+// --- FONCTION AJOUTÉE POUR CORRIGER L'ERREUR ---
+/**
+ * Crée une version "debounced" d'une fonction qui retarde son exécution.
+ * Très utile pour les événements qui se déclenchent rapidement (recherche, scroll, etc.).
+ * @param {Function} func La fonction à "débouncer".
+ * @param {number} delay Le délai en millisecondes.
+ * @returns {Function} La nouvelle fonction "debounced".
+ */
+export function debounce(func, delay) {
+    let timeoutId;
+    return function(...args) {
+        // Annule le timer précédent à chaque nouvel appel
+        clearTimeout(timeoutId);
+        // Définit un nouveau timer
+        timeoutId = setTimeout(() => {
+            func.apply(this, args);
+        }, delay);
+    };
 }

@@ -162,6 +162,11 @@ export const onReviewCreated = onDocumentCreated({ document: "reviews/{reviewId}
     });
 });
 
+
+
+
+
+
 /**
  * Trigger sur l'ajout/suppression d'un favori.
  */

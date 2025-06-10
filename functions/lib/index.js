@@ -29,17 +29,17 @@ if (!admin.apps.length) {
     admin.initializeApp();
 }
 // CORRECTION : Import des noms de fonctions corrects
-const auth_js_1 = require("./auth.js");
-Object.defineProperty(exports, "onUserCreate", { enumerable: true, get: function () { return auth_js_1.onUserCreate; } });
-const firestoreTriggers_js_1 = require("./firestoreTriggers.js");
-Object.defineProperty(exports, "onAdCreated", { enumerable: true, get: function () { return firestoreTriggers_js_1.onAdCreated; } });
-Object.defineProperty(exports, "onAdUpdated", { enumerable: true, get: function () { return firestoreTriggers_js_1.onAdUpdated; } });
-Object.defineProperty(exports, "onAdDeleted", { enumerable: true, get: function () { return firestoreTriggers_js_1.onAdDeleted; } });
-Object.defineProperty(exports, "onMessageCreated", { enumerable: true, get: function () { return firestoreTriggers_js_1.onMessageCreated; } });
-Object.defineProperty(exports, "onReviewCreated", { enumerable: true, get: function () { return firestoreTriggers_js_1.onReviewCreated; } });
-Object.defineProperty(exports, "onFavoriteWritten", { enumerable: true, get: function () { return firestoreTriggers_js_1.onFavoriteWritten; } });
-const storageTriggers_js_1 = require("./storageTriggers.js");
-Object.defineProperty(exports, "compressUploadedImage", { enumerable: true, get: function () { return storageTriggers_js_1.compressUploadedImage; } });
-const scheduled_js_1 = require("./scheduled.js");
-Object.defineProperty(exports, "cleanupOrphanedImages", { enumerable: true, get: function () { return scheduled_js_1.cleanupOrphanedImages; } });
+const auth_1 = require("./auth");
+Object.defineProperty(exports, "onUserCreate", { enumerable: true, get: function () { return auth_1.onUserCreate; } });
+const firestoreTriggers_1 = require("./firestoreTriggers");
+Object.defineProperty(exports, "onAdCreated", { enumerable: true, get: function () { return firestoreTriggers_1.onAdCreated; } });
+Object.defineProperty(exports, "onAdUpdated", { enumerable: true, get: function () { return firestoreTriggers_1.onAdUpdated; } });
+Object.defineProperty(exports, "onAdDeleted", { enumerable: true, get: function () { return firestoreTriggers_1.onAdDeleted; } });
+Object.defineProperty(exports, "onMessageCreated", { enumerable: true, get: function () { return firestoreTriggers_1.onMessageCreated; } });
+Object.defineProperty(exports, "onReviewCreated", { enumerable: true, get: function () { return firestoreTriggers_1.onReviewCreated; } });
+Object.defineProperty(exports, "onFavoriteWritten", { enumerable: true, get: function () { return firestoreTriggers_1.onFavoriteWritten; } });
+const storageTriggers_1 = require("./storageTriggers");
+Object.defineProperty(exports, "compressUploadedImage", { enumerable: true, get: function () { return storageTriggers_1.compressUploadedImage; } });
+const scheduled_1 = require("./scheduled");
+Object.defineProperty(exports, "cleanupOrphanedImages", { enumerable: true, get: function () { return scheduled_1.cleanupOrphanedImages; } });
 //# sourceMappingURL=index.js.map

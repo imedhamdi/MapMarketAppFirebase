@@ -3,55 +3,68 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function signedIn() {
-      return request.auth != null;
-    }
-
+    // Helper function to check if the user is the owner of a document
     function isOwner(userId) {
-      return signedIn() && request.auth.uid == userId;
+      return request.auth != null && request.auth.uid == userId;
     }
 
-    // Profils utilisateurs
+    // Helper function to validate ad data before writing
+    function isAdDataValid(data) {
+      return data.title is string
+        && data.title.size() > 0 && data.title.size() < 100
+        && data.description is string && data.description.size() < 1000
+        && data.price is number && data.price >= 0
+        && data.category is string
+        && data.location is latlng
+        && data.userId == request.auth.uid;
+    }
+
+    // Helper function to validate user profile data
+    function isProfileDataValid(data) {
+      return data.displayName is string
+        && data.displayName.size() > 2
+        && data.displayName.size() < 50;
+    }
+
+    // Users: Logged-in users can read public profiles. Users can only create and update their own profile.
     match /users/{userId} {
-      allow read, update, delete: if isOwner(userId);
-      allow create: if signedIn() && request.auth.uid == userId;
+      allow read: if request.auth != null;
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) && isProfileDataValid(request.resource.data);
+      allow delete: if false; // Deleting should be done via Cloud Function
     }
 
-    // Annonces accessibles publiquement
+    // Ads: Anyone can read ads. Only owners can manage their own ads.
     match /ads/{adId} {
       allow read: if true;
-      allow create: if signedIn() && request.resource.data.sellerId == request.auth.uid;
-      allow update, delete: if signedIn() && request.auth.uid == resource.data.sellerId;
+      allow create: if request.auth != null && isAdDataValid(request.resource.data);
+      allow update: if request.auth != null
+        && isOwner(resource.data.userId)
+        && isAdDataValid(request.resource.data);
+      allow delete: if request.auth != null && isOwner(resource.data.userId);
     }
 
-    // Favoris et alertes privés
-    match /users/{userId}/favorites/{favId} {
-      allow read, write: if isOwner(userId);
-    }
-    match /users/{userId}/alerts/{alertId} {
-      allow read, write: if isOwner(userId);
+    // Alerts: Users can manage only their own alerts
+    match /alerts/{alertId} {
+      allow read, create, update, delete: if request.auth != null && isOwner(resource.data.userId);
     }
 
-    // Chats et messages accessibles uniquement aux participants
+    // Chats and messages: Only participants can access them
     match /chats/{chatId} {
-      allow read, write: if signedIn() && request.auth.uid in resource.data.participants;
-    }
-    match /chats/{chatId}/messages/{messageId} {
-      allow read, create: if signedIn() && request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
-    }
+      function isParticipant() {
+        return request.auth != null && request.auth.uid in resource.data.participants;
+      }
 
-    // Avis
-    match /reviews/{reviewId} {
-      allow read: if true;
-      allow create: if signedIn();
-    }
+      allow read, update: if isParticipant();
+      allow create: if request.auth != null
+        && request.auth.uid in request.resource.data.participants;
 
-    match /categories/{categoryId} {
-      allow read: if true;
-    }
-
-    match /{document=**} {
-      allow read, write: if false;
+      match /messages/{messageId} {
+        allow read, create: if request.auth != null
+          && get(/databases/$(database)/documents/chats/$(chatId))
+            .data.participants.hasAny([request.auth.uid]);
+        allow update, delete: if false;
+      }
     }
   }
 }
